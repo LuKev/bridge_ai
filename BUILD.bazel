@@ -92,6 +92,7 @@ py_binary(
 py_test(
     name = "test_env_rules",
     srcs = ["tests/test_bridge_env.py"],
+    main = "tests/test_bridge_env.py",
     deps = [":bridge_ai_core"],
     imports = ["src"],
 )

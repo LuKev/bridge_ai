@@ -142,6 +142,16 @@ For each candidate run:
   - `selfplay_1772363098694376` + `train_1772363108351559` + `eval_1772363111782472` (`/tmp/bridge_ai_tiny_pipeline_search.yaml`)
     - search-enabled pipeline completed, `eval.mean_score=0.0`
 - Conclusion: pipeline and manifest workflow are functional; results are not scientifically significant at sample size 1.
+- Ran full baseline verification pass for smoke and manifest checks (current date):
+  - `bazel test //:test_env_rules` now passes after BUILD test target fix.
+  - `bazel run //:selfplay -- --config-path=configs/smoke.yaml` exits successfully.
+  - `bazel run //:train -- --config-path=configs/smoke.yaml` exits with `FileNotFoundError: replays/smoke/latest.json` when run standalone (depends on prior replay output in same invocation scope).
+  - `bazel run //:eval -- --config-path=configs/smoke.yaml` exits successfully, `mean_score=-1700.0`, `win_rate_vs_zero=0.0`.
+  - `bazel run //:pipeline -- --config-path=configs/smoke.yaml` exits successfully, `loss=5.605102479457855`, `eval.mean_score=-350.0`.
+  - `bazel run //:smoke -- --config-path=configs/smoke.yaml --manifest-path=artifacts/smoke/manifest.json` exits successfully.
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/manifest.json` exits clean, `manifest_issues=[]`.
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke/manifest.json` exits clean, `manifest_issues=[]`.
+- Immediate note: standalone `train` requires compatible replay artifact locality; full-scope smoke/pipeline runs are the reliable loop until we explicitly add cross-invocation output persistence.
 
 ## Immediate next experiments
 
