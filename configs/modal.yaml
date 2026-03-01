@@ -1,0 +1,12 @@
+compute:
+  selfplay_concurrency: 8
+  actor_type: "A10"
+  trainer_type: "A100"
+  evaluator_type: "CPU"
+  use_spot: false
+
+storage:
+  checkpoint_dir: "/mnt/data/checkpoints"
+  replay_dir: "/mnt/data/replays"
+  artifacts_dir: "/mnt/data/artifacts"
+

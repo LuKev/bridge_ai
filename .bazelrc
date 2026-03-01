@@ -1,0 +1,9 @@
+# Bridge AI Bazel defaults
+# Prefer explicit failures and stable local output.
+
+# Show richer tracebacks for dependency/config failures.
+build --verbose_failures
+run --verbose_failures
+
+# Keep command output readable in terminal.
+common --color=yes

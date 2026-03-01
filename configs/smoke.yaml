@@ -1,0 +1,65 @@
+compute:
+  device: "cpu"
+  num_workers: 1
+  max_parallel_games: 1
+
+model:
+  vocab_size: 1000
+  action_vocab_size: 260
+  phase_vocab_size: 4
+  hidden_dim: 64
+  num_layers: 2
+  num_heads: 2
+  dropout: 0.1
+  max_seq_len: 256
+  use_auxiliary_heads: false
+
+selfplay:
+  num_episodes: 1
+  max_steps: 64
+  seed: 7
+  seed_sequence:
+    - 7
+  output_path: "replays/smoke/latest.json"
+  checkpoint: null
+  determinization_count: 1
+  num_determinizations: 1
+  search_simulations: 0
+  rollout_depth: 1
+  use_search: false
+  use_model_logits: true
+
+storage:
+  replay_dir: "replays"
+  checkpoint_dir: "checkpoints"
+  artifacts_dir: "artifacts/smoke"
+  manifest_path: "artifacts/smoke/manifest.json"
+
+training:
+  epochs: 1
+  batch_size: 8
+  iterations: 1
+  lr: 0.0001
+  replay_path: "replays/smoke/latest.json"
+  init_checkpoint: null
+  checkpoint_name: "latest.pt"
+  ckpt_dir: "checkpoints"
+  device: "cpu"
+  online_refresh: false
+  online_refresh_every: 1
+
+evaluation:
+  rounds: 1
+  seed: 7
+  seed_sequence:
+    - 7
+  checkpoint: "checkpoints/latest.pt"
+  baseline_checkpoint: null
+  use_search: false
+  search_simulations: 0
+  rollout_depth: 1
+  num_determinizations: 1
+  seed_steps: 200
+
+pipeline:
+  iterations: 1

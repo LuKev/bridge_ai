@@ -1,0 +1,9 @@
+compute:
+  device: "cpu"
+  num_workers: 1
+  max_parallel_games: 2
+
+logging:
+  run_name: "bridge-ai-local"
+  artifacts_dir: "artifacts/local"
+

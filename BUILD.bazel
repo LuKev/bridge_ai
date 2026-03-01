@@ -1,0 +1,97 @@
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+load("@pypi//:requirements.bzl", "requirement")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "bridge_ai_core",
+    srcs = glob([
+        "src/bridge_ai/**/*.py",
+    ], exclude = [
+        "src/bridge_ai/ui/streamlit_app.py",
+    ]),
+    imports = ["src"],
+)
+
+py_library(
+    name = "third_party",
+    deps = [
+        requirement("numpy"),
+        requirement("pyyaml"),
+        requirement("torch"),
+        requirement("streamlit"),
+    ],
+)
+
+filegroup(
+    name = "config_files",
+    srcs = glob(["configs/*.yaml"]),
+)
+
+py_binary(
+    name = "selfplay",
+    srcs = ["src/bridge_ai/selfplay/runner.py"],
+    main = "src/bridge_ai/selfplay/runner.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    data = [":config_files"],
+    imports = ["src"],
+)
+
+py_binary(
+    name = "train",
+    srcs = ["src/bridge_ai/training/train_loop.py"],
+    main = "src/bridge_ai/training/train_loop.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    data = [":config_files"],
+    imports = ["src"],
+)
+
+py_binary(
+    name = "eval",
+    srcs = ["src/bridge_ai/eval/evaluator.py"],
+    main = "src/bridge_ai/eval/evaluator.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    data = [":config_files"],
+    imports = ["src"],
+)
+
+py_binary(
+    name = "ui",
+    srcs = ["src/bridge_ai/ui/streamlit_app.py"],
+    main = "src/bridge_ai/ui/streamlit_app.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    imports = ["src"],
+)
+
+py_binary(
+    name = "smoke",
+    srcs = ["src/bridge_ai/infra/experiment_runner.py"],
+    main = "src/bridge_ai/infra/experiment_runner.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    data = [":config_files"],
+    imports = ["src"],
+)
+
+py_binary(
+    name = "manifest_check",
+    srcs = ["src/bridge_ai/infra/manifest_checker.py"],
+    main = "src/bridge_ai/infra/manifest_checker.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    imports = ["src"],
+)
+
+py_binary(
+    name = "pipeline",
+    srcs = ["src/bridge_ai/infra/pipeline.py"],
+    main = "src/bridge_ai/infra/pipeline.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    data = [":config_files"],
+    imports = ["src"],
+)
+
+py_test(
+    name = "test_env_rules",
+    srcs = ["tests/test_bridge_env.py"],
+    deps = [":bridge_ai_core"],
+    imports = ["src"],
+)
