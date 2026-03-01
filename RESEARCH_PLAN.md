@@ -152,6 +152,22 @@ For each candidate run:
   - `bazel run //:manifest_check -- --manifest-path=artifacts/manifest.json` exits clean, `manifest_issues=[]`.
   - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke/manifest.json` exits clean, `manifest_issues=[]`.
 - Immediate note: standalone `train` requires compatible replay artifact locality; full-scope smoke/pipeline runs are the reliable loop until we explicitly add cross-invocation output persistence.
+- Ran first local non-smoke pipeline with explicit per-sweep namespaces:
+  - `configs/local_real.yaml` (created in-repo for this run):
+    - `storage.replay_dir: replays/local_real`
+    - `storage.checkpoint_dir: checkpoints/local_real`
+    - `storage.manifest_path: artifacts/local_real/manifest.json`
+    - model: `hidden_dim=128`, `num_layers=4`, `num_heads=4`
+    - episodes: 4, search disabled
+    - evaluation rounds: 4
+  - Command result:
+    - `bazel run //:pipeline -- --config-path=configs/local_real.yaml`
+    - `selfplay_ok=True`, `train_ok=True`
+    - `eval.mean_score=0.0`, `win_rate_vs_zero=0.0`, `score_std=0.0`
+    - `loss=6.355249804835165`
+  - Manifest integrity:
+    - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real/manifest.json`
+    - `manifest_issues=[]`
 
 ## Immediate next experiments
 
