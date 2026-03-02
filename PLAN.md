@@ -281,7 +281,10 @@ Build a bridge AI research stack with:
    - `bazel run //:ui`
 5. Inspect manifest + evaluator outputs for trend signals and regressions.
 6. Add experiment and ablation entries to `RESEARCH_PLAN.md` after each run.
-7. Keep this section as runtime gating; tiny pipeline/smoke runs are complete, research loop is ready to scale.
+7. Run the long local scaling stretch with `configs/local_real_iter4.yaml`:
+   - resumeable from checkpoint: `checkpoints/local_real_iter4/latest.pt`
+   - target at least 3000 training iterations per run before declaring local convergence.
+8. Keep this section as runtime gating; tiny pipeline/smoke runs are complete, research loop is now entering long-run local scaling.
 
 ## Non-functional requirements
 

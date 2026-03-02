@@ -92,6 +92,8 @@ For each candidate run:
   - deterministic variants: `artifacts/determinization_v1/manifest.json`
 - Keep all output directories explicit in each config (`storage.manifest_path`, `storage.replay_dir`, `storage.checkpoint_dir`).
 
+  - Keep per-run model continuity by setting `init_checkpoint` or loading latest file where needed.
+
 ## Run templates
 
 - **Smoke baseline (no search)**
@@ -184,7 +186,22 @@ For each candidate run:
     - third-iteration loss trace:
       - `2.7344`, `2.6565`
   - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_iter1/manifest.json`
-    - `manifest_issues=[]`
+  - `manifest_issues=[]`
+
+- Ran local large-iteration scaling attempt:
+  - config: `configs/local_real_iter4.yaml`
+  - run command: `bazel run //:pipeline -- --config-path=configs/local_real_iter4.yaml`
+  - settings: 8 self-play episodes, 80 max steps, `training.iterations=3000`, batch size 64, no search
+  - status: interrupted at iteration 905 with `KeyboardInterrupt` (intentional checkpoint/CPU budget pause)
+  - observed loss trend:
+    - iter 0: `6.4052`
+    - iter 100: `0.9596`
+    - iter 200: `0.2805`
+    - iter 500: `0.10399`
+    - iter 800: `0.06699`
+    - iter 900: `0.06681`
+    - iter 905: `0.06376`
+  - interpretation: monotonic improvement from ~6.4 to ~0.06 by 900 iterations with no divergence; run should be resumed (if desired) from checkpoint `checkpoints/local_real_iter4/latest.pt` to hit higher-step regime.
 - Follow-up: this confirms the local loop is runnable at a larger scale and produces stable per-iteration persistence behavior.
 
 ## Immediate next experiments
