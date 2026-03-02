@@ -202,6 +202,9 @@ For each candidate run:
     - iter 900: `0.06681`
     - iter 905: `0.06376`
   - interpretation: monotonic improvement from ~6.4 to ~0.06 by 900 iterations with no divergence; run should be resumed (if desired) from checkpoint `checkpoints/local_real_iter4/latest.pt` to hit higher-step regime.
+  - manifest check:
+    - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_iter4/manifest.json`
+    - `manifest_issues=[]`
 - Follow-up: this confirms the local loop is runnable at a larger scale and produces stable per-iteration persistence behavior.
 
 ## Immediate next experiments
