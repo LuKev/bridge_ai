@@ -1,0 +1,115 @@
+compute:
+  device: "cpu"
+  num_workers: 1
+  max_parallel_games: 2
+
+logging:
+  run_name: "bridge-ai-local-real-iter1"
+  artifacts_dir: "artifacts/local_real_iter1"
+
+model:
+  vocab_size: 2000
+  action_vocab_size: 260
+  phase_vocab_size: 4
+  hidden_dim: 128
+  num_layers: 4
+  num_heads: 4
+  dropout: 0.1
+  max_seq_len: 256
+  use_auxiliary_heads: false
+
+selfplay:
+  num_episodes: 16
+  max_steps: 120
+  seed: 7
+  seed_sequence:
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+    - 23
+    - 24
+    - 25
+    - 26
+    - 27
+    - 28
+    - 29
+    - 30
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+  output_path: "replays/local_real_iter1/latest.json"
+  checkpoint: null
+  determinization_count: 2
+  num_determinizations: 2
+  search_simulations: 2
+  rollout_depth: 4
+  use_search: false
+  use_model_logits: true
+
+storage:
+  replay_dir: "replays/local_real_iter1"
+  checkpoint_dir: "checkpoints/local_real_iter1"
+  artifacts_dir: "artifacts/local_real_iter1"
+  manifest_path: "artifacts/local_real_iter1/manifest.json"
+
+training:
+  epochs: 2
+  batch_size: 16
+  iterations: 3
+  lr: 0.0001
+  replay_path: "replays/local_real_iter1/latest.json"
+  init_checkpoint: null
+  checkpoint_name: "latest.pt"
+  ckpt_dir: "checkpoints/local_real_iter1"
+  device: "cpu"
+  online_refresh: false
+  online_refresh_every: 1
+
+evaluation:
+  rounds: 16
+  seed: 7
+  seed_sequence:
+    - 7
+    - 8
+    - 9
+    - 10
+    - 11
+    - 12
+    - 13
+    - 14
+    - 15
+    - 16
+    - 17
+    - 18
+    - 19
+    - 20
+    - 21
+    - 22
+  checkpoint: "checkpoints/local_real_iter1/latest.pt"
+  baseline_checkpoint: null
+  use_search: false
+  search_simulations: 0
+  rollout_depth: 1
+  num_determinizations: 1
+  seed_steps: 200
+
+pipeline:
+  iterations: 3

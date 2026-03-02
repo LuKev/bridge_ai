@@ -168,6 +168,24 @@ For each candidate run:
   - Manifest integrity:
     - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real/manifest.json`
     - `manifest_issues=[]`
+- Ran first scaled local training sweep:
+  - `configs/local_real_iter1.yaml`:
+    - selfplay: `num_episodes=16`, `max_steps=120`, `search_simulations=2`, `determinization_count=2`
+    - training: `iterations=3`, `epochs=2`, `batch_size=16`
+    - evaluation: `rounds=16`, fixed seed sequence `[7..22]`
+    - pipeline: `iterations=3`
+  - `bazel run //:pipeline -- --config-path=configs/local_real_iter1.yaml`
+    - `selfplay_ok=True`, `train_ok=True`, `eval_ok=True` for all 3 iterations
+    - eval per iteration: `mean_score=0.0`, `win_rate_vs_zero=0.0`, `score_std=0.0`
+    - first-iteration loss trace:
+      - `5.9763`, `4.6164`
+    - second-iteration loss trace:
+      - `3.3288`, `2.8845`
+    - third-iteration loss trace:
+      - `2.7344`, `2.6565`
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_iter1/manifest.json`
+    - `manifest_issues=[]`
+- Follow-up: this confirms the local loop is runnable at a larger scale and produces stable per-iteration persistence behavior.
 
 ## Immediate next experiments
 
