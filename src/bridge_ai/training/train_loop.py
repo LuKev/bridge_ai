@@ -46,6 +46,7 @@ class TrainConfig:
     init_checkpoint: str | None = None
     checkpoint_name: str = "latest.pt"
     ckpt_dir: str = "checkpoints"
+    checkpoint_every: int = 0
     device: str = "cpu"
     online_refresh: bool = False
     online_refresh_every: int = 1
@@ -100,16 +101,38 @@ def _maybe_refresh_replay(
     run_selfplay(config_path=config_path)
 
 
-def _load_checkpoint_if_available(model: BridgeMonolithTransformer, path: str | None) -> None:
+def _load_checkpoint_if_available(model: BridgeMonolithTransformer, path: str | None) -> int:
+    """Load model state and return the iteration this checkpoint represents."""
     if not path:
-        return
+        return 0
     checkpoint_path = Path(path)
     if not checkpoint_path.exists():
-        return
+        return 0
     payload = torch.load(checkpoint_path, map_location="cpu")
     state_dict = payload.get("state_dict")
     if isinstance(state_dict, dict):
         model.load_state_dict(state_dict)
+    return int(payload.get("iteration", 0))
+
+
+def _save_checkpoint(
+    model: BridgeMonolithTransformer,
+    model_cfg: ModelConfig,
+    ckpt_dir: str,
+    checkpoint_name: str,
+    iteration: int,
+) -> None:
+    ckpt = Path(ckpt_dir)
+    ckpt.mkdir(parents=True, exist_ok=True)
+    ckpt_file = ckpt / checkpoint_name
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "config": model_cfg.__dict__,
+            "iteration": iteration,
+        },
+        ckpt_file,
+    )
 
 
 def train(config_path: str = "configs/default.yaml") -> None:
@@ -126,7 +149,7 @@ def train(config_path: str = "configs/default.yaml") -> None:
         train_cfg.ckpt_dir = default_ckpt_dir
     model_cfg = ModelConfig(**cfg.get("model", {}))
     model = BridgeMonolithTransformer(model_cfg).to(train_cfg.device)
-    _load_checkpoint_if_available(model, train_cfg.init_checkpoint)
+    start_iteration = _load_checkpoint_if_available(model, train_cfg.init_checkpoint)
     run_id = f"train_{int(time.time() * 1_000_000)}"
     run_signature = compute_config_signature(
         config_path,
@@ -139,7 +162,9 @@ def train(config_path: str = "configs/default.yaml") -> None:
 
     losses = []
     last_loss = 0.0
-    for iteration in range(max(1, train_cfg.iterations)):
+    target_iterations = max(1, train_cfg.iterations)
+    last_iteration = start_iteration - 1
+    for iteration in range(start_iteration, target_iterations):
         _maybe_refresh_replay(
             do_refresh=train_cfg.online_refresh,
             iteration=iteration,
@@ -158,18 +183,27 @@ def train(config_path: str = "configs/default.yaml") -> None:
             last_loss = loss
             losses.append(float(loss))
             print({"iteration": iteration, "epoch": epoch, "loss": loss})
+        last_iteration = iteration
+        if train_cfg.checkpoint_every > 0 and (iteration + 1) % train_cfg.checkpoint_every == 0:
+            _save_checkpoint(
+                model,
+                model_cfg,
+                train_cfg.ckpt_dir,
+                train_cfg.checkpoint_name,
+                iteration=iteration,
+            )
         if len(dataset) == 0:
             break
 
-    ckpt = Path(train_cfg.ckpt_dir)
-    ckpt.mkdir(parents=True, exist_ok=True)
-    ckpt_file = ckpt / train_cfg.checkpoint_name
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": model_cfg.__dict__,
-        },
-        ckpt_file,
+    if last_iteration < 0:
+        last_iteration = 0
+    checkpoint_path = str(Path(train_cfg.ckpt_dir).resolve() / train_cfg.checkpoint_name)
+    _save_checkpoint(
+        model,
+        model_cfg,
+        train_cfg.ckpt_dir,
+        train_cfg.checkpoint_name,
+        iteration=last_iteration,
     )
     append_manifest_entry(
         manifest_path,
@@ -178,7 +212,7 @@ def train(config_path: str = "configs/default.yaml") -> None:
         config_path=config_path,
         run_signature=run_signature,
         config_snapshot=config_snapshot,
-        outputs={"checkpoint": str(ckpt_file), "epochs": train_cfg.epochs, "items": len(buffer)},
+        outputs={"checkpoint": checkpoint_path, "epochs": train_cfg.epochs, "items": len(buffer)},
         metrics={
             "loss": last_loss,
             "loss_history": losses,

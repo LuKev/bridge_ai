@@ -201,11 +201,27 @@ For each candidate run:
     - iter 800: `0.06699`
     - iter 900: `0.06681`
     - iter 905: `0.06376`
-  - interpretation: monotonic improvement from ~6.4 to ~0.06 by 900 iterations with no divergence; run should be resumed (if desired) from checkpoint `checkpoints/local_real_iter4/latest.pt` to hit higher-step regime.
+  - interpretation: monotonic improvement from ~6.4 to ~0.06 by 900 iterations with no divergence; run was interrupted before checkpoint emit could be observed in manifest (checkpoint/iteration persistence needed stronger guarantees on resume).
   - manifest check:
     - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_iter4/manifest.json`
     - `manifest_issues=[]`
 - Follow-up: this confirms the local loop is runnable at a larger scale and produces stable per-iteration persistence behavior.
+
+- Ran clean 2000-iteration local stretch from new namespace:
+  - config: `configs/local_real_scale2000.yaml`
+  - run command: `bazel run //:pipeline -- --config-path=configs/local_real_scale2000.yaml`
+  - settings:
+    - `selfplay.num_episodes: 8`, `selfplay.max_steps: 80`, search disabled
+    - `training.iterations: 2000`, `training.batch_size: 64`, `training.checkpoint_every: 100`
+    - `evaluation.rounds: 4`
+  - result:
+    - training reached `iteration: 1999` successfully (full 2000 iterations)
+    - loss improved from ~`6.50` at iter 0 to `0.0313774056` at iter 1999
+    - `eval mean_score=-187.5`, `win_rate_vs_zero=0.0`, `score_std=188.33148966649205`
+    - `manifest` entries for `selfplay`, `train`, and `eval` all `status=ok`
+    - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_scale2000/manifest.json` passed (`manifest_issues=[]`)
+  - checkpoint behavior:
+    - `training.checkpoint_every=100` writes `checkpoints/local_real_scale2000/latest.pt` at the configured cadence and on completion.
 
 ## Immediate next experiments
 

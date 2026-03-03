@@ -166,6 +166,16 @@ Build a bridge AI research stack with:
 - 2026-03-01: Added `configs/smoke.yaml` for immediate one-episode, low-latency smoke execution.
 - 2026-03-01: Updated `.gitignore` to ignore Bazel/output artifacts (`bazel-*`, `artifacts/`) by default.
 
+- 2026-03-01: Fixed training checkpoint resume semantics in `src/bridge_ai/training/train_loop.py` to persist and restore `iteration` from checkpoints, enabling true continuation across process restarts (weight-only warm starts now resume from the saved iteration).
+- 2026-03-01: Added configurable `training.checkpoint_every` in `src/bridge_ai/training/train_loop.py` and periodic checkpoint persistence at runtime every N iterations.
+- 2026-03-01: Removed legacy local test configs and started a fresh namespace with `configs/local_real_scale2000.yaml` for clean 2000-iteration experiments.
+- 2026-03-01: Completed a fresh `bazel run //:pipeline -- --config-path=configs/local_real_scale2000.yaml` stretch to full `iterations=2000` with `training.checkpoint_every: 100`.
+- 2026-03-01: Confirmed `local_real_scale2000` end-to-end manifest integrity:
+  - `selfplay` + `train` + `eval` all `status=ok`
+  - train final `loss=0.03137740562669933` at `iteration: 1999`
+  - `eval mean_score=-187.5`, `win_rate_vs_zero=0.0`, `score_std=188.33148966649205`
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_scale2000/manifest.json` returned `manifest_issues=[]`.
+
 ### Milestone 1b — Bazel-first execution
 
 - [x] Add `WORKSPACE` and `BUILD.bazel`.
@@ -281,10 +291,14 @@ Build a bridge AI research stack with:
    - `bazel run //:ui`
 5. Inspect manifest + evaluator outputs for trend signals and regressions.
 6. Add experiment and ablation entries to `RESEARCH_PLAN.md` after each run.
-7. Run the long local scaling stretch with `configs/local_real_iter4.yaml`:
-   - resumeable from checkpoint: `checkpoints/local_real_iter4/latest.pt`
-   - target at least 3000 training iterations per run before declaring local convergence.
-8. Keep this section as runtime gating; tiny pipeline/smoke runs are complete, research loop is now entering long-run local scaling.
+7. Shift pipeline execution to Modal-backed runs:
+   - validate `configs/modal.yaml` against local baseline behavior
+   - run `bazel run //:selfplay`, `bazel run //:train`, `bazel run //:eval` in Modal-compatible mode from the same config namespace
+   - keep `artifacts`, `replays`, and `checkpoints` namespaces separated per sweep for reproducibility.
+8. Track modal scaling outcomes in `RESEARCH_PLAN.md`:
+   - evaluate stability, cost, and throughput deltas versus local baseline.
+   - only expand workload size after manifest-validated baseline parity.
+9. Keep this section as runtime gating; local warm-up experiments are complete, next milestone is Modal transfer and ops hardening.
 
 ## Non-functional requirements
 
