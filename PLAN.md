@@ -165,6 +165,7 @@ Build a bridge AI research stack with:
 - 2026-03-01: Updated `RESEARCH_PLAN.md` to include concrete research run templates, reproducibility gates, and completed tiny smoke ledger.
 - 2026-03-01: Added `configs/smoke.yaml` for immediate one-episode, low-latency smoke execution.
 - 2026-03-01: Updated `.gitignore` to ignore Bazel/output artifacts (`bazel-*`, `artifacts/`) by default.
+- 2026-03-02: Added GitHub Actions CI workflow (`.github/workflows/ci.yml`) to run `bazel test //:test_env_rules`, `bazel run //:smoke` with smoke manifest, and `bazel run //:manifest_check` on push/PR.
 
 - 2026-03-01: Fixed training checkpoint resume semantics in `src/bridge_ai/training/train_loop.py` to persist and restore `iteration` from checkpoints, enabling true continuation across process restarts (weight-only warm starts now resume from the saved iteration).
 - 2026-03-01: Added configurable `training.checkpoint_every` in `src/bridge_ai/training/train_loop.py` and periodic checkpoint persistence at runtime every N iterations.
