@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Dict
+from dataclasses import replace
+from pathlib import Path
+from typing import Dict, Tuple
 
 from bridge_ai.common.cards import index_to_card
 from bridge_ai.common.state import BridgeState
 from bridge_ai.common.types import Contract, Phase, Seat, Vulnerability
 from bridge_ai.env.bridge_env import BridgeEnv
+from bridge_ai.data.lin_parser import ParsedLinRecord, run_lin_record, load_lin_records_from_path
 from bridge_ai.common.actions import PASS_ACTION
 from bridge_ai.data.manifest import validate_manifest, write_config_snapshot, append_manifest_entry, compute_config_signature
 
@@ -34,6 +37,22 @@ def _state_with_fields(**fields) -> BridgeState:
     )
     defaults.update(fields)
     return BridgeState(**defaults)
+
+def _run_lin_game_through_env(record: ParsedLinRecord) -> BridgeState:
+    return run_lin_record(record)
+
+
+_REAL_LIN_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "real_lin_records.txt"
+_REAL_LIN_GAME_RECORDS = load_lin_records_from_path(str(_REAL_LIN_FIXTURE_PATH))
+
+
+def test_replay_of_real_lin_games_no_illegal_action():
+    for idx, record in enumerate(_REAL_LIN_GAME_RECORDS, 1):
+        label = f"real-lin-{idx}"
+        final_state = _run_lin_game_through_env(record)
+        assert final_state.played_cards, f"{label}: replay produced no actions"
+        if final_state.done:
+            assert final_state.phase == Phase.DEFENSE
 
 
 def test_pass_out_auction_results_zero_contract_and_terminal():

@@ -1,7 +1,7 @@
 # Bridge AI Research Plan
 
 Status: `in progress`  
-Last updated: 2026-03-01
+Last updated: 2026-03-04
 
 ## Scope
 
@@ -9,6 +9,13 @@ This document tracks the *research loop* (hypotheses, experiments, and conclusio
 
 `PLAN.md` tracks implementation and infrastructure milestones.  
 This file tracks scientific progress and experiment execution.
+
+## Real-game corpus sources for bridge replay validation
+
+- `https://www.tistis.nl/pbn/` — public event-level PBN archives with downloadable tournament hand files (many links enumerate tournament `.pbn` bundles).
+- `https://github.com/ureshvahalia/bridge_deals_db` — community-aggregated bridge deal bundles (PBN/LIN/RBN release artifacts) useful for quick bootstrap of offline replay corpora.
+- `https://www.bridgebase.com/tools/hvdoc.html` + `https://www.bridgebase.com/tools/handviewer.html`
+  - BBO handviewer documentation and examples for LIN payloads (`lin`, `myhand`) useful for extracting real deal records (`md`, `mb`, `pc`) for end-to-end env replay checks.
 
 ## Ready-to-run research launch (no design work needed)
 
@@ -222,6 +229,21 @@ For each candidate run:
     - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_scale2000/manifest.json` passed (`manifest_issues=[]`)
   - checkpoint behavior:
     - `training.checkpoint_every=100` writes `checkpoints/local_real_scale2000/latest.pt` at the configured cadence and on completion.
+- 2026-03-04:
+  - Added centralized LIN parser/replay utilities in `src/bridge_ai/data/lin_parser.py`:
+    - decode/parse real LIN records (`md`, `mb`, `pc`, vulnerability, claims),
+    - reconstruct initial states with dealer/claims, and
+    - replay complete games with legal-action assertions.
+- Updated `tests/test_bridge_env.py` to consume that parser for `test_replay_of_real_lin_games_no_illegal_action` and enforce strict terminal/non-terminal invariants per fixture.
+- Next immediate action: add a corpus manifest + fixture loader so multiple downloaded files can be fed into the same strict replay path.
+- Added a curated 20-record real LIN fixture at `tests/fixtures/real_lin_records.txt` and fixed explicit 4-hand LIN parsing support (`md` hand sections with 4 hands now parse correctly).
+
+### 2026-03-03
+- Added a real-game regression path for full end-to-end replay validation:
+  - parser support for key LIN tokens (`md`, `mb`, `pc`, `sv`, `mc`) is present in `tests/test_bridge_env.py`.
+  - added fixed real-world fixtures (BBO-format LIN strings) under `_REAL_LIN_GAME_RECORDS`.
+  - strict terminal/non-terminal expectations are now enforced per fixture.
+  - this test layer is intended as the first guardrail before scaling data-driven sweeps.
 
 ## Immediate next experiments
 

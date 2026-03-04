@@ -2,7 +2,7 @@
 
 Status: `implementation complete; research execution is now initialized`
 Owner: Kevin (primary), Codex (execution)  
-Last updated: 2026-03-01
+Last updated: 2026-03-04
 
 ## Rule
 - After each completed step or any planning revision, update this document before moving to the next major task.
@@ -61,6 +61,8 @@ Build a bridge AI research stack with:
   - imperfect-information MCTS facade with determinization hooks.
 - `src/bridge_ai/data/buffer.py`
   - replay buffer interface and serialization format.
+- `src/bridge_ai/data/lin_parser.py`
+  - LIN decoding + strict replay validation helpers for real-record ingestion.
 - `src/bridge_ai/selfplay/runner.py`
   - self-play worker and trajectory generation entrypoints.
 - `src/bridge_ai/training/train_loop.py`
@@ -94,6 +96,7 @@ Build a bridge AI research stack with:
 - [x] Add experiment/version manifest and artifact catalog path (`artifacts/manifest.json`) with run writes from selfplay/train/eval.
 - [x] Add manifest reproducibility metadata and frozen config snapshot writes.
 - [x] Add deterministic bridge-env regression test suite and Bazel test target.
+- [x] Add real-bridge LIN replay test fixture coverage in `tests/test_bridge_env.py` for end-to-end legal-action replay validation.
 - [x] Add manifest reproducibility validation helper (`validate_manifest`) for run auditability.
 - [x] Add deterministic checkpoint baseline comparison path in evaluator (`baseline_checkpoint`, delta metrics).
 - [x] Add dedicated research planning artifact (`RESEARCH_PLAN.md`) for experiment design, execution log, and conclusions.
@@ -133,6 +136,9 @@ Build a bridge AI research stack with:
 
 - 2026-03-01: Added run reproducibility metadata and per-run frozen config snapshots (`run_signature`, `config_snapshot`).
 - 2026-03-01: Added deterministic bridge-env regression tests (`tests/test_bridge_env.py`) for passout/follow-suit/trick winner/final score checks.
+- 2026-03-03: Added real-game LIN replay validation test harness in `tests/test_bridge_env.py` for deterministic legality checks over sampled BBO-formatted records.
+- 2026-03-04: Centralized LIN ingest/replay validation in `src/bridge_ai/data/lin_parser.py` and reused it in `tests/test_bridge_env.py` for strict full/partial real-record checks.
+- 2026-03-04: Added a curated 20-entry real-world LIN fixture under `tests/fixtures/real_lin_records.txt`, normalized fixture formatting, and fixed `src/bridge_ai/data/lin_parser.py` to support explicit 4-hand `md` records.
 - 2026-03-01: Added Bazel test target `//:test_env_rules` in `BUILD.bazel`.
 - 2026-03-01: Added manifest validation helper (`validate_manifest`, `validate_manifest_entry`) and coverage for the behavior in `tests/test_bridge_env.py`.
 - 2026-03-01: Added deterministic fixed-seed evaluator path with optional baseline checkpoint head-to-head metrics.
