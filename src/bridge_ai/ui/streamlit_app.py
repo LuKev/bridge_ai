@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import sys
 from typing import Any, Dict, Iterable, List, Tuple
 
 import json
@@ -15,15 +17,34 @@ except Exception:  # pragma: no cover
 
 SUIT = {0: "♣", 1: "♦", 2: "♥", 3: "♠"}
 RANK = {0: "2", 1: "3", 2: "4", 3: "5", 4: "6", 5: "7", 6: "8", 7: "9", 8: "T", 9: "J", 10: "Q", 11: "K", 12: "A"}
+_LAUNCH_GUARD_ENV = "BRIDGE_AI_UI_STREAMLIT_LAUNCHED"
 
 
 
 def _load_replays(path: str = "replays") -> Dict[str, Any]:
-    files = list(Path(path).glob("*.json"))
+    root = Path(path)
+    files = list(root.rglob("*.json"))
     payloads: Dict[str, Any] = {}
     for f in sorted(files):
-        payloads[f.name] = json.loads(f.read_text(encoding="utf-8"))
+        relative = f.relative_to(root).as_posix()
+        payloads[relative] = json.loads(f.read_text(encoding="utf-8"))
     return payloads
+
+
+def _is_running_in_streamlit() -> bool:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+        return get_script_run_ctx() is not None
+    except Exception:
+        return False
+
+
+def _launch_streamlit(script_path: str) -> None:
+    os.environ[_LAUNCH_GUARD_ENV] = "1"
+    from streamlit.web import bootstrap
+
+    bootstrap.run(script_path, False, sys.argv[1:], {})
 
 
 def _format_card(card_idx: int) -> str:
@@ -270,6 +291,13 @@ def run_ui() -> None:
 
 
 def main() -> None:  # pragma: no cover
+    if st is None:
+        raise RuntimeError("streamlit is not installed. Install optional ui dependencies.")
+
+    launched = os.environ.get(_LAUNCH_GUARD_ENV) == "1"
+    if not launched and not _is_running_in_streamlit():
+        _launch_streamlit(str(Path(__file__).resolve()))
+        return
     run_ui()
 
 

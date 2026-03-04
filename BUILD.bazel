@@ -7,8 +7,6 @@ py_library(
     name = "bridge_ai_core",
     srcs = glob([
         "src/bridge_ai/**/*.py",
-    ], exclude = [
-        "src/bridge_ai/ui/streamlit_app.py",
     ]),
     imports = ["src"],
 )
@@ -93,6 +91,14 @@ py_test(
     name = "test_env_rules",
     srcs = ["tests/test_bridge_env.py"],
     main = "tests/test_bridge_env.py",
+    deps = [":bridge_ai_core"],
+    imports = ["src"],
+)
+
+py_test(
+    name = "test_ui",
+    srcs = ["tests/test_ui.py"],
+    main = "tests/test_ui.py",
     deps = [":bridge_ai_core"],
     imports = ["src"],
 )
