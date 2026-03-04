@@ -176,6 +176,7 @@ Build a bridge AI research stack with:
 - 2026-03-02: Added GitHub Actions CI workflow (`.github/workflows/ci.yml`) to run `bazel test //:test_env_rules`, `bazel run //:smoke` with smoke manifest, and `bazel run //:manifest_check` on push/PR.
 - 2026-03-04: Fixed Streamlit UI launch behavior in `src/bridge_ai/ui/streamlit_app.py` so `bazel run //:ui` starts Streamlit server mode (in-process bootstrap) instead of remaining in bare mode, and updated replay loading to recursively index nested `replays/**.json` artifacts by relative path.
 - 2026-03-04: Added `tests/test_ui.py` with launcher/replay-discovery regressions and registered Bazel target `//:test_ui` in `BUILD.bazel`.
+- 2026-03-04: Fixed Linux CI Bazel smoke-analysis failure (`@@rules_python++pip+pypi//watchdog` missing) by adding explicit `watchdog` dependency in `requirements.txt` and pinning it in `requirements_lock.txt`.
 
 - 2026-03-01: Fixed training checkpoint resume semantics in `src/bridge_ai/training/train_loop.py` to persist and restore `iteration` from checkpoints, enabling true continuation across process restarts (weight-only warm starts now resume from the saved iteration).
 - 2026-03-01: Added configurable `training.checkpoint_every` in `src/bridge_ai/training/train_loop.py` and periodic checkpoint persistence at runtime every N iterations.
