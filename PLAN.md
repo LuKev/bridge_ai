@@ -515,10 +515,10 @@ Run the new data, training, and evaluation flow remotely once the architecture i
   - repaired the GitHub Actions CI dependency graph on Linux:
     - root cause:
       - `torch==2.2.2` on Linux x86_64 pulls platform-scoped CUDA-side `nvidia_*` wheels plus `triton`,
-      - but those dependencies were missing from `requirements.txt` and `requirements_lock.txt`,
-      - so Bazel `rules_python` failed analysis in the smoke workflow on `main`.
+      - and the initial fix still missed the `nvidia-nvjitlink-cu12` transitive dependency pulled by `nvidia-cusparse-cu12` / `nvidia-cusolver-cu12`,
+      - so the Linux smoke workflow on `main` could not complete Bazel analysis until the full transitive closure was pinned in `requirements.txt` and `requirements_lock.txt`,
     - fix:
-      - added the exact Linux-only transitive requirements to both requirement files,
+      - added the full Linux-only `torch` dependency closure to both requirement files,
       - keeping the existing pinned `torch` version instead of re-resolving unrelated packages.
     - local verification:
       - `bazel test //:test_env_rules`
