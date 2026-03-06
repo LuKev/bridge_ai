@@ -512,6 +512,19 @@ Run the new data, training, and evaluation flow remotely once the architecture i
     - interpretation:
       - the model now has a measurable belief-quality trace through play,
       - and both auction-phase and play-phase belief improved materially during the tournament bootstrap run.
+  - repaired the GitHub Actions CI dependency graph on Linux:
+    - root cause:
+      - `torch==2.2.2` on Linux x86_64 pulls platform-scoped CUDA-side `nvidia_*` wheels plus `triton`,
+      - but those dependencies were missing from `requirements.txt` and `requirements_lock.txt`,
+      - so Bazel `rules_python` failed analysis in the smoke workflow on `main`.
+    - fix:
+      - added the exact Linux-only transitive requirements to both requirement files,
+      - keeping the existing pinned `torch` version instead of re-resolving unrelated packages.
+    - local verification:
+      - `bazel test //:test_env_rules`
+      - `bazel run //:smoke -- --config-path=configs/smoke.yaml --manifest-path=artifacts/smoke/manifest.json`
+      - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke/manifest.json`
+      - confirmed the lockfile now covers the full Linux x86_64 dependency set declared by `torch==2.2.2`.
 
 ## Immediate next actions
 
