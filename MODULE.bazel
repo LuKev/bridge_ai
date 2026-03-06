@@ -8,6 +8,10 @@ use_repo(python, python_3_11 = "python_3_11")
 
 pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 pip.parse(
+    experimental_index_url = "https://pypi.org/simple",
+    experimental_index_url_overrides = {
+        "torch": "https://download.pytorch.org/whl/cpu",
+    },
     hub_name = "pypi",
     python_version = "3.11",
     requirements_lock = "//:requirements_lock.txt",
