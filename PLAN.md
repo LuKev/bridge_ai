@@ -519,6 +519,7 @@ Run the new data, training, and evaluation flow remotely once the architecture i
       - so `main` CI needed a CPU-wheel source for `torch`, not more CUDA packages in the lockfile.
     - fix:
       - configured `pip.parse` to resolve `torch` from the PyTorch CPU wheel index while leaving the rest of the Python graph on PyPI,
+      - added a Linux-specific lockfile that pins `torch==2.2.2+cpu` so Bazel uses CPU-wheel metadata on GitHub Actions instead of PyPI's CUDA metadata,
       - removed the previously added CUDA-only `nvidia_*` and `triton` entries from the requirements files,
       - kept the existing pinned `torch` version and the rest of the lockfile stable.
     - local verification:
