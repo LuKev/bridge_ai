@@ -1,108 +1,58 @@
-"""Training loop skeleton for self-play-only updates."""
+"""Training loop for the bidding-plus-belief transformer."""
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+import json
 import time
-import argparse
+from typing import List
 
 import torch
 import torch.nn.functional as F
 import yaml
 from torch.utils.data import Dataset
 
-from bridge_ai.data.buffer import ReplayBuffer, Transition
+from bridge_ai.data.belief_dataset import BeliefExample, load_examples
 from bridge_ai.data.manifest import append_manifest_entry, compute_config_signature, write_config_snapshot
-from bridge_ai.models.monolithic_transformer import BridgeInputEncoder, BridgeMonolithTransformer, ModelConfig
+from bridge_ai.eval.evaluator import EvalConfig, evaluate_model
+from bridge_ai.infra.plots import write_accuracy_svg
+from bridge_ai.models.bidding_belief_transformer import (
+    BiddingBeliefConfig,
+    BiddingBeliefEncoder,
+    BiddingBeliefTransformer,
+)
 
 
-class TransitionDataset(Dataset):
-    def __init__(self, buffer: ReplayBuffer):
-        self.buffer = buffer
+class BeliefExampleDataset(Dataset):
+    def __init__(self, examples: List[BeliefExample]):
+        self.examples = examples
 
     def __len__(self) -> int:
-        return len(self.buffer._items)
+        return len(self.examples)
 
-    def __getitem__(self, idx: int):
-        item = self.buffer._items[idx]
-        return item.state, item.action, item.policy_target, item.value_target
-
-
-def _tokenize_batch(state_batch):
-    encoder = BridgeInputEncoder()
-    tensors = [encoder.encode_dict(s, perspective=int(s.get("current_player", 0))) for s in state_batch]
-    return torch.cat(tensors, dim=0).to(torch.long)
+    def __getitem__(self, idx: int) -> BeliefExample:
+        return self.examples[idx]
 
 
 @dataclass
 class TrainConfig:
-    epochs: int = 1
+    epochs: int = 2
     iterations: int = 1
-    batch_size: int = 16
-    lr: float = 1e-4
+    batch_size: int = 32
+    lr: float = 3e-4
     replay_path: str = "replays/latest.json"
     init_checkpoint: str | None = None
     checkpoint_name: str = "latest.pt"
     ckpt_dir: str = "checkpoints"
-    checkpoint_every: int = 0
     device: str = "cpu"
-    online_refresh: bool = False
-    online_refresh_every: int = 1
+    eval_every_epochs: int = 1
+    holdout_max_examples: int = 256
+    holdout_sample_count: int = 1
 
 
-def train_one_epoch(
-    model: BridgeMonolithTransformer,
-    dataset: Dataset,
-    opt: torch.optim.Optimizer,
-    batch_size: int = 16,
-):
-    model.train()
-    total = 0.0
-    total_batches = 0
-    for start in range(0, len(dataset), batch_size):
-        batch = [dataset[i] for i in range(start, min(len(dataset), start + batch_size))]
-        states, _, policy_targets, value_targets = zip(*batch)
-        device = next(model.parameters()).device
-        states = _tokenize_batch(states).to(device)
-        policy_targets = torch.tensor(policy_targets, dtype=torch.float32, device=device)
-        value_targets = torch.tensor(value_targets, dtype=torch.float32, device=device)
-        legal_mask = None
-        phase = torch.zeros((states.shape[0],), dtype=torch.long, device=device)
-        logits, values = model(states, phase, legal_action_mask=legal_mask)
-        policy_denom = policy_targets.sum(dim=-1, keepdim=True).clamp(min=1.0)
-        policy_targets_norm = policy_targets / policy_denom
-        log_probs = F.log_softmax(logits, dim=-1)
-        policy_loss = F.kl_div(log_probs, policy_targets_norm, reduction="batchmean")
-        value_loss = F.mse_loss(values, value_targets)
-        loss = policy_loss + value_loss
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-        total += float(loss.item())
-        total_batches += 1
-    return total / max(1, total_batches)
-
-
-def _maybe_refresh_replay(
-    *,
-    do_refresh: bool,
-    iteration: int,
-    refresh_every: int,
-    config_path: str,
-) -> None:
-    if not do_refresh or refresh_every <= 0:
-        return
-    if iteration % refresh_every != 0:
-        return
-    from bridge_ai.selfplay.runner import run as run_selfplay
-
-    run_selfplay(config_path=config_path)
-
-
-def _load_checkpoint_if_available(model: BridgeMonolithTransformer, path: str | None) -> int:
-    """Load model state and return the iteration this checkpoint represents."""
+def _load_checkpoint_if_available(model: BiddingBeliefTransformer, path: str | None) -> int:
     if not path:
         return 0
     checkpoint_path = Path(path)
@@ -116,95 +66,192 @@ def _load_checkpoint_if_available(model: BridgeMonolithTransformer, path: str | 
 
 
 def _save_checkpoint(
-    model: BridgeMonolithTransformer,
-    model_cfg: ModelConfig,
+    model: BiddingBeliefTransformer,
+    config: BiddingBeliefConfig,
     ckpt_dir: str,
     checkpoint_name: str,
     iteration: int,
-) -> None:
-    ckpt = Path(ckpt_dir)
-    ckpt.mkdir(parents=True, exist_ok=True)
-    ckpt_file = ckpt / checkpoint_name
+) -> str:
+    destination = Path(ckpt_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = destination / checkpoint_name
     torch.save(
         {
             "state_dict": model.state_dict(),
-            "config": model_cfg.__dict__,
+            "config": config.__dict__,
             "iteration": iteration,
         },
-        ckpt_file,
+        checkpoint_path,
     )
+    return str(checkpoint_path)
+
+
+def _batch_tensors(
+    examples: List[BeliefExample],
+    encoder: BiddingBeliefEncoder,
+    device: torch.device,
+    action_vocab_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    token_ids = torch.stack([encoder.encode_example(example) for example in examples]).to(device)
+    legal_masks = torch.stack(
+        [encoder.action_mask(example.legal_actions, action_vocab_size=action_vocab_size) for example in examples]
+    ).to(device)
+    bid_targets = torch.tensor([example.target_bid for example in examples], dtype=torch.long, device=device)
+    bid_target_mask = torch.tensor([bool(example.has_bid_target) for example in examples], dtype=torch.bool, device=device)
+    owner_targets = torch.tensor([example.card_owners for example in examples], dtype=torch.long, device=device)
+    owner_mask = torch.tensor([example.belief_target_mask for example in examples], dtype=torch.bool, device=device)
+    return token_ids, legal_masks, bid_targets, bid_target_mask, owner_targets, owner_mask
+
+
+def train_one_epoch(
+    model: BiddingBeliefTransformer,
+    dataset: BeliefExampleDataset,
+    optimizer: torch.optim.Optimizer,
+    *,
+    batch_size: int,
+) -> dict:
+    model.train()
+    encoder = model.encoder
+    device = next(model.parameters()).device
+    total_loss = 0.0
+    total_bid_loss = 0.0
+    total_owner_loss = 0.0
+    total_batches = 0
+    for start in range(0, len(dataset), batch_size):
+        examples = [dataset[idx] for idx in range(start, min(len(dataset), start + batch_size))]
+        token_ids, legal_masks, bid_targets, bid_target_mask, owner_targets, owner_mask = _batch_tensors(
+            examples,
+            encoder,
+            device,
+            model.config.action_vocab_size,
+        )
+        bid_logits, owner_logits = model(token_ids, legal_action_mask=legal_masks)
+        if bid_target_mask.any():
+            bid_loss = F.cross_entropy(bid_logits[bid_target_mask], bid_targets[bid_target_mask])
+        else:
+            bid_loss = torch.tensor(0.0, device=device)
+
+        masked_owner_logits = owner_logits[owner_mask]
+        masked_owner_targets = owner_targets[owner_mask]
+        if masked_owner_logits.numel() == 0:
+            owner_loss = torch.tensor(0.0, device=device)
+        else:
+            owner_loss = F.cross_entropy(masked_owner_logits, masked_owner_targets)
+        loss = bid_loss + owner_loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += float(loss.item())
+        total_bid_loss += float(bid_loss.item())
+        total_owner_loss += float(owner_loss.item())
+        total_batches += 1
+    return {
+        "loss": total_loss / max(1, total_batches),
+        "bid_loss": total_bid_loss / max(1, total_batches),
+        "belief_loss": total_owner_loss / max(1, total_batches),
+    }
 
 
 def train(config_path: str = "configs/default.yaml") -> None:
-    cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     train_cfg = TrainConfig(**cfg.get("training", {}))
     manifest_path = cfg.get("storage", {}).get("manifest_path", "artifacts/manifest.json")
     storage = cfg.get("storage", {})
-    default_ckpt_dir = storage.get("checkpoint_dir", train_cfg.ckpt_dir)
-    default_replay = storage.get("replay_dir", train_cfg.replay_path)
-    default_replay_path = default_replay.rstrip("/") + "/latest.json"
     if train_cfg.replay_path == "replays/latest.json":
-        train_cfg.replay_path = default_replay_path
+        train_cfg.replay_path = f"{storage.get('replay_dir', 'replays').rstrip('/')}/latest.json"
     if train_cfg.ckpt_dir == "checkpoints":
-        train_cfg.ckpt_dir = default_ckpt_dir
-    model_cfg = ModelConfig(**cfg.get("model", {}))
-    model = BridgeMonolithTransformer(model_cfg).to(train_cfg.device)
+        train_cfg.ckpt_dir = storage.get("checkpoint_dir", "checkpoints")
+
+    model_cfg = BiddingBeliefConfig(**cfg.get("model", {}))
+    model = BiddingBeliefTransformer(model_cfg).to(train_cfg.device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg.lr)
     start_iteration = _load_checkpoint_if_available(model, train_cfg.init_checkpoint)
+
+    examples = load_examples(train_cfg.replay_path, split="train")
+    if not examples:
+        raise RuntimeError(f"training dataset is empty: {train_cfg.replay_path}")
+    dataset = BeliefExampleDataset(examples)
+    holdout_examples = load_examples(train_cfg.replay_path, split="holdout")
+
     run_id = f"train_{int(time.time() * 1_000_000)}"
     run_signature = compute_config_signature(
         config_path,
         extra={"epochs": train_cfg.epochs, "iterations": train_cfg.iterations, "batch_size": train_cfg.batch_size},
     )
     config_snapshot = write_config_snapshot(config_path, manifest_path, run_id)
-    buffer = ReplayBuffer.load_json(Path(train_cfg.replay_path))
-    dataset = TransitionDataset(buffer)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=train_cfg.lr)
 
-    losses = []
-    last_loss = 0.0
-    target_iterations = max(1, train_cfg.iterations)
-    last_iteration = start_iteration - 1
-    for iteration in range(start_iteration, target_iterations):
-        _maybe_refresh_replay(
-            do_refresh=train_cfg.online_refresh,
-            iteration=iteration,
-            refresh_every=train_cfg.online_refresh_every,
-            config_path=config_path,
+    history = []
+    last_metrics = {"loss": 0.0, "bid_loss": 0.0, "belief_loss": 0.0}
+    last_iteration = start_iteration
+    eval_cfg = EvalConfig(
+        replay_path=train_cfg.replay_path,
+        max_examples=train_cfg.holdout_max_examples,
+        preview_examples=0,
+        sample_count=train_cfg.holdout_sample_count,
+    )
+    if holdout_examples:
+        initial_eval = evaluate_model(model, holdout_examples, eval_cfg)
+        history.append(
+            {
+                "epoch": 0,
+                "iteration": start_iteration,
+                "train_loss": None,
+                "train_bid_loss": None,
+                "train_belief_loss": None,
+                "holdout_bid_accuracy": initial_eval["bid_accuracy"],
+                "holdout_belief_accuracy": initial_eval["belief_accuracy"],
+                "holdout_auction_belief_accuracy": initial_eval.get("auction_belief_accuracy"),
+                "holdout_play_belief_accuracy": initial_eval.get("play_belief_accuracy"),
+                "holdout_bid_loss": initial_eval["bid_loss"],
+                "holdout_belief_loss": initial_eval["belief_loss"],
+            }
         )
-
-        if not Path(train_cfg.replay_path).exists():
-            raise RuntimeError(f"replay file does not exist: {train_cfg.replay_path}")
-
-        buffer = ReplayBuffer.load_json(Path(train_cfg.replay_path))
-        dataset = TransitionDataset(buffer)
-
-        for epoch in range(train_cfg.epochs):
-            loss = train_one_epoch(model, dataset, optimizer, batch_size=train_cfg.batch_size)
-            last_loss = loss
-            losses.append(float(loss))
-            print({"iteration": iteration, "epoch": epoch, "loss": loss})
-        last_iteration = iteration
-        if train_cfg.checkpoint_every > 0 and (iteration + 1) % train_cfg.checkpoint_every == 0:
-            _save_checkpoint(
+    global_epoch = 0
+    for iteration in range(start_iteration, max(1, train_cfg.iterations)):
+        for _ in range(train_cfg.epochs):
+            last_metrics = train_one_epoch(
                 model,
-                model_cfg,
-                train_cfg.ckpt_dir,
-                train_cfg.checkpoint_name,
-                iteration=iteration,
+                dataset,
+                optimizer,
+                batch_size=train_cfg.batch_size,
             )
-        if len(dataset) == 0:
-            break
+            global_epoch += 1
+            row = {
+                "epoch": global_epoch,
+                "iteration": iteration,
+                "train_loss": last_metrics["loss"],
+                "train_bid_loss": last_metrics["bid_loss"],
+                "train_belief_loss": last_metrics["belief_loss"],
+            }
+            if holdout_examples and train_cfg.eval_every_epochs > 0 and global_epoch % train_cfg.eval_every_epochs == 0:
+                holdout_eval = evaluate_model(model, holdout_examples, eval_cfg)
+                row.update(
+                    {
+                        "holdout_bid_accuracy": holdout_eval["bid_accuracy"],
+                        "holdout_belief_accuracy": holdout_eval["belief_accuracy"],
+                        "holdout_auction_belief_accuracy": holdout_eval.get("auction_belief_accuracy"),
+                        "holdout_play_belief_accuracy": holdout_eval.get("play_belief_accuracy"),
+                        "holdout_bid_loss": holdout_eval["bid_loss"],
+                        "holdout_belief_loss": holdout_eval["belief_loss"],
+                    }
+                )
+            history.append(row)
+        last_iteration = iteration
 
-    if last_iteration < 0:
-        last_iteration = 0
-    checkpoint_path = str(Path(train_cfg.ckpt_dir).resolve() / train_cfg.checkpoint_name)
-    _save_checkpoint(
+    checkpoint_path = _save_checkpoint(
         model,
         model_cfg,
         train_cfg.ckpt_dir,
         train_cfg.checkpoint_name,
         iteration=last_iteration,
     )
+    artifacts_dir = Path(storage.get("artifacts_dir", "artifacts"))
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    history_path = artifacts_dir / "training_history.json"
+    history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+    plot_path = artifacts_dir / "accuracy_curves.svg"
+    write_accuracy_svg(history, plot_path)
     append_manifest_entry(
         manifest_path,
         run_type="train",
@@ -212,18 +259,24 @@ def train(config_path: str = "configs/default.yaml") -> None:
         config_path=config_path,
         run_signature=run_signature,
         config_snapshot=config_snapshot,
-        outputs={"checkpoint": checkpoint_path, "epochs": train_cfg.epochs, "items": len(buffer)},
+        outputs={
+            "checkpoint": checkpoint_path,
+            "items": len(dataset),
+            "history_path": str(history_path),
+            "plot_path": str(plot_path),
+        },
         metrics={
-            "loss": last_loss,
-            "loss_history": losses,
-            "iterations": train_cfg.iterations,
+            "loss": last_metrics["loss"],
+            "bid_loss": last_metrics["bid_loss"],
+            "belief_loss": last_metrics["belief_loss"],
+            "loss_history": history,
         },
         status="ok",
     )
 
 
 def main() -> None:  # pragma: no cover
-    parser = argparse.ArgumentParser(description="Train monolithic bridge model from replay data.")
+    parser = argparse.ArgumentParser(description="Train bidding/belief model.")
     parser.add_argument("--config-path", "--config_path", default="configs/default.yaml")
     args = parser.parse_args()
     train(config_path=args.config_path)

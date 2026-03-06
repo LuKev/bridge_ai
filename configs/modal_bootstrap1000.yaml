@@ -1,0 +1,64 @@
+modal:
+  app_name: "bridge-ai"
+  volume_name: "bridge-ai-artifacts"
+  mount_path: "/vol/bridge-ai"
+
+compute:
+  selfplay_cpu: 4
+  trainer_gpu: "A10G"
+  evaluator_cpu: 2
+  use_spot: false
+
+model:
+  action_vocab_size: 40
+  hidden_dim: 96
+  num_layers: 3
+  num_heads: 4
+  dropout: 0.1
+  max_seq_len: 128
+  owner_classes: 4
+
+storage:
+  checkpoint_dir: "/vol/bridge-ai/checkpoints/bootstrap1000"
+  replay_dir: "/vol/bridge-ai/replays/bootstrap1000"
+  artifacts_dir: "/vol/bridge-ai/artifacts/bootstrap1000"
+  manifest_path: "/vol/bridge-ai/artifacts/bootstrap1000/manifest.json"
+
+selfplay:
+  seed: 42
+  output_path: "/vol/bridge-ai/replays/bootstrap1000/latest.json"
+  archive_url: "https://github.com/ureshvahalia/bridge_deals_db/releases/download/v1.0/bridge_deals.tar.gz"
+  event_files:
+    - "JSON/WBF/2023/BermudaBowl2023.json"
+    - "JSON/WBF/2023/VeniceCup2023.json"
+    - "JSON/WBF/2023/dOrsiTrophy2023.json"
+    - "JSON/WBF/2023/WuhanCup2023.json"
+  max_games: 1000
+  records_per_event: 250
+  holdout_fraction: 0.2
+  cache_dir: "/vol/bridge-ai/artifacts/bootstrap1000/cache"
+  extract_dir: "/vol/bridge-ai/artifacts/bootstrap1000/extract"
+
+training:
+  epochs: 10
+  batch_size: 128
+  iterations: 1
+  lr: 0.0003
+  replay_path: "/vol/bridge-ai/replays/bootstrap1000/latest.json"
+  init_checkpoint: null
+  checkpoint_name: "latest.pt"
+  ckpt_dir: "/vol/bridge-ai/checkpoints/bootstrap1000"
+  device: "cuda"
+  eval_every_epochs: 1
+  holdout_max_examples: 1024
+  holdout_sample_count: 1
+
+evaluation:
+  checkpoint: "/vol/bridge-ai/checkpoints/bootstrap1000/latest.pt"
+  replay_path: "/vol/bridge-ai/replays/bootstrap1000/latest.json"
+  max_examples: 1024
+  preview_examples: 5
+  sample_count: 6
+
+pipeline:
+  iterations: 1
