@@ -1,0 +1,53 @@
+modal:
+  app_name: "bridge-ai"
+  volume_name: "bridge-ai-artifacts"
+  mount_path: "/vol/bridge-ai"
+
+compute:
+  selfplay_cpu: 2
+  trainer_gpu: "CPU"
+  evaluator_cpu: 1
+  use_spot: false
+
+model:
+  action_vocab_size: 40
+  hidden_dim: 64
+  num_layers: 2
+  num_heads: 2
+  dropout: 0.1
+  max_seq_len: 96
+  owner_classes: 4
+
+storage:
+  checkpoint_dir: "/vol/bridge-ai/checkpoints/belief_smoke"
+  replay_dir: "/vol/bridge-ai/replays/belief_smoke"
+  artifacts_dir: "/vol/bridge-ai/artifacts/belief_smoke"
+  manifest_path: "/vol/bridge-ai/artifacts/belief_smoke/manifest.json"
+
+selfplay:
+  seed: 7
+  output_path: "/vol/bridge-ai/replays/belief_smoke/latest.json"
+  data_sources: []
+  max_games: 8
+  holdout_fraction: 0.25
+
+training:
+  epochs: 2
+  batch_size: 16
+  iterations: 1
+  lr: 0.0005
+  replay_path: "/vol/bridge-ai/replays/belief_smoke/latest.json"
+  init_checkpoint: null
+  checkpoint_name: "latest.pt"
+  ckpt_dir: "/vol/bridge-ai/checkpoints/belief_smoke"
+  device: "cpu"
+
+evaluation:
+  checkpoint: "/vol/bridge-ai/checkpoints/belief_smoke/latest.pt"
+  replay_path: "/vol/bridge-ai/replays/belief_smoke/latest.json"
+  max_examples: 16
+  preview_examples: 3
+  sample_count: 3
+
+pipeline:
+  iterations: 1

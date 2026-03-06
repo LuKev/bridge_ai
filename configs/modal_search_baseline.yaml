@@ -1,0 +1,98 @@
+modal:
+  app_name: "bridge-ai"
+  volume_name: "bridge-ai-artifacts"
+  mount_path: "/vol/bridge-ai"
+
+compute:
+  selfplay_cpu: 8
+  trainer_gpu: "A100"
+  evaluator_cpu: 2
+  use_spot: false
+
+model:
+  vocab_size: 2000
+  action_vocab_size: 260
+  phase_vocab_size: 4
+  hidden_dim: 128
+  num_layers: 4
+  num_heads: 4
+  dropout: 0.1
+  max_seq_len: 256
+  use_auxiliary_heads: false
+
+storage:
+  checkpoint_dir: "/vol/bridge-ai/checkpoints/search_baseline"
+  replay_dir: "/vol/bridge-ai/replays/search_baseline"
+  artifacts_dir: "/vol/bridge-ai/artifacts/search_baseline"
+  manifest_path: "/vol/bridge-ai/artifacts/search_baseline/manifest.json"
+
+selfplay:
+  num_episodes: 8
+  max_steps: 80
+  seed: 31
+  seed_sequence:
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+  output_path: "/vol/bridge-ai/replays/search_baseline/latest.json"
+  checkpoint: "/vol/bridge-ai/checkpoints/benchmark_scale/latest.pt"
+  determinization_count: 1
+  num_determinizations: 1
+  search_simulations: 4
+  rollout_depth: 4
+  use_search: true
+  use_model_logits: true
+
+training:
+  epochs: 1
+  batch_size: 64
+  iterations: 200
+  checkpoint_every: 50
+  lr: 0.0001
+  replay_path: "/vol/bridge-ai/replays/search_baseline/latest.json"
+  init_checkpoint: "/vol/bridge-ai/checkpoints/benchmark_scale/latest.pt"
+  checkpoint_name: "latest.pt"
+  ckpt_dir: "/vol/bridge-ai/checkpoints/search_baseline"
+  device: "cuda"
+  online_refresh: false
+  online_refresh_every: 1
+
+evaluation:
+  rounds: 20
+  seed: 31
+  seed_sequence:
+    - 31
+    - 32
+    - 33
+    - 34
+    - 35
+    - 36
+    - 37
+    - 38
+    - 39
+    - 40
+    - 41
+    - 42
+    - 43
+    - 44
+    - 45
+    - 46
+    - 47
+    - 48
+    - 49
+    - 50
+  checkpoint: "/vol/bridge-ai/checkpoints/search_baseline/latest.pt"
+  baseline_checkpoint: "/vol/bridge-ai/checkpoints/benchmark_scale/latest.pt"
+  use_search: true
+  search_simulations: 4
+  rollout_depth: 4
+  num_determinizations: 1
+  seed_steps: 200
+
+pipeline:
+  iterations: 1

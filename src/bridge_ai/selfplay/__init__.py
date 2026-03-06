@@ -1,2 +1,1 @@
-from .runner import SelfPlayConfig, generate_trajectories
-
+from .runner import BootstrapConfig, run

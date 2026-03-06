@@ -1,186 +1,223 @@
-"""Evaluation harness for checkpoint comparison."""
+"""Evaluation harness for bidding and hidden-hand belief checkpoints."""
 
 from __future__ import annotations
 
+import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import pstdev
-from typing import Dict, List
 import time
-import argparse
+from typing import Dict, List
 
-import yaml
 import torch
+import torch.nn.functional as F
+import yaml
 
-from bridge_ai.env.bridge_env import BridgeEnv
-from bridge_ai.models.monolithic_transformer import BridgeInputEncoder, BridgeMonolithTransformer, ModelConfig
-from bridge_ai.search.ismcts import ISMCTS, ISMCTSConfig
+from bridge_ai.common.actions import bid_to_string
+from bridge_ai.data.belief_dataset import BeliefExample, load_examples
 from bridge_ai.data.manifest import append_manifest_entry, compute_config_signature, write_config_snapshot
+from bridge_ai.inference.posterior_sampler import sample_hidden_deal
+from bridge_ai.models.bidding_belief_transformer import (
+    BiddingBeliefConfig,
+    BiddingBeliefTransformer,
+)
 
 
 @dataclass
 class EvalConfig:
-    rounds: int = 20
-    seed: int = 0
-    seed_sequence: list[int] | None = None
     checkpoint: str = "checkpoints/latest.pt"
-    use_search: bool = True
-    search_simulations: int = 12
-    rollout_depth: int = 16
-    num_determinizations: int = 4
-    baseline_checkpoint: str | None = None
-    seed_steps: int = 200
+    replay_path: str = "replays/latest.json"
+    max_examples: int = 64
+    preview_examples: int = 3
+    sample_count: int = 4
 
 
-def evaluate_model(
-    model_cfg: ModelConfig,
-    checkpoint: str,
-    rounds: int,
-    seed: int,
-    seed_sequence: list[int] | None = None,
-    use_search: bool = True,
-    search_simulations: int = 12,
-    rollout_depth: int = 16,
-    num_determinizations: int = 4,
-) -> Dict[str, float]:
+def _load_checkpoint(model_cfg: BiddingBeliefConfig, checkpoint: str) -> BiddingBeliefTransformer:
+    model = BiddingBeliefTransformer(model_cfg)
     checkpoint_path = Path(checkpoint)
-    model = BridgeMonolithTransformer(model_cfg)
     if checkpoint_path.exists():
         payload = torch.load(checkpoint_path, map_location="cpu")
-        model.load_state_dict(payload["state_dict"])
-    return evaluate(
-        model,
-        rounds=rounds,
-        seed=seed,
-        seed_sequence=seed_sequence,
-        use_search=use_search,
-        search_simulations=search_simulations,
-        rollout_depth=rollout_depth,
-        num_determinizations=num_determinizations,
+        state_dict = payload.get("state_dict")
+        if isinstance(state_dict, dict):
+            model.load_state_dict(state_dict)
+    return model
+
+
+def _owner_entropy(owner_logits: torch.Tensor) -> torch.Tensor:
+    probs = torch.softmax(owner_logits, dim=-1)
+    return -(probs * probs.clamp(min=1e-8).log()).sum(dim=-1)
+
+
+def _preview_for_example(example: BeliefExample, bid_probs: torch.Tensor, owner_probs: torch.Tensor) -> Dict[str, object]:
+    top_indices = (
+        torch.topk(bid_probs, k=min(5, bid_probs.shape[-1])).indices.tolist()
+        if example.has_bid_target
+        else []
     )
-
-
-def evaluate(
-    model: BridgeMonolithTransformer,
-    rounds: int = 20,
-    seed: int = 0,
-    seed_sequence: list[int] | None = None,
-    use_search: bool = True,
-    search_simulations: int = 12,
-    rollout_depth: int = 16,
-    num_determinizations: int = 4,
-) -> Dict[str, float]:
-    env = BridgeEnv(seed=seed)
-    search = ISMCTS(
-        config=ISMCTSConfig(
-            num_simulations=search_simulations,
-            rollout_depth=rollout_depth,
-            num_determinizations=num_determinizations,
+    preview_cards = []
+    for card_index in range(52):
+        if not example.belief_target_mask[card_index]:
+            continue
+        probs = owner_probs[card_index]
+        preview_cards.append(
+            {
+                "card_index": card_index,
+                "true_owner": int(example.card_owners[card_index]),
+                "top_owner": int(torch.argmax(probs).item()),
+                "top_owner_prob": float(torch.max(probs).item()),
+            }
         )
-    ) if use_search else None
-    encoder = BridgeInputEncoder()
-    scores: List[float] = []
-
-    if seed_sequence:
-        if len(seed_sequence) < rounds:
-            seeds = seed_sequence + [seed + i for i in range(rounds - len(seed_sequence))]
-        else:
-            seeds = seed_sequence[:rounds]
-    else:
-        seeds = [seed + i for i in range(rounds)]
-
-    for s in seeds[:rounds]:
-        state = env.reset(seed=s)
-        total = 0.0
-        for _ in range(260):
-            legal = env.legal_actions()
-            if not legal:
-                break
-            legal_actions = [int(a) for a in legal]
-            token_ids = encoder.encode(state, perspective=state.current_player)
-            legal_mask = torch.zeros(model.config.action_vocab_size, dtype=torch.bool)
-            for a in legal_actions:
-                if 0 <= a < model.config.action_vocab_size:
-                    legal_mask[a] = True
-            legal_mask = legal_mask.unsqueeze(0)
-            logits, value = model(token_ids, torch.tensor([0], dtype=torch.long), legal_action_mask=legal_mask)
-            if search is None:
-                action_mask = legal_mask.squeeze(0)
-                legal_logits = logits.masked_fill(~action_mask, float("-inf"))
-                action = int(torch.argmax(legal_logits, dim=-1).item())
-            else:
-                result = search.select_action(state, logits, legal_actions=legal_actions, model=model)
-                action = int(result.action)
-                if action not in legal_actions:
-                    action = int(legal_actions[0])
-            if action not in legal_actions:
-                action = int(legal_actions[0])
-            _, reward, done, _ = env.step(action)
-            total += reward
-            if done:
-                break
-        scores.append(total)
-    if not scores:
-        scores = [0.0]
+        if len(preview_cards) >= 6:
+            break
     return {
-        "rounds": float(rounds),
-        "mean_score": float(sum(scores) / max(1, len(scores))),
-        "win_rate_vs_zero": float(sum(s > 0.0 for s in scores) / max(1, len(scores))),
-        "score_std": float(pstdev(scores) if len(scores) > 1 else 0.0),
-        "score_min": float(min(scores)),
-        "score_max": float(max(scores)),
+        "record_id": example.record_id,
+        "bid_index": example.bid_index,
+        "phase": example.phase,
+        "played_count": example.played_count,
+        "target_bid": bid_to_string(int(example.target_bid)) if example.has_bid_target else None,
+        "top_bids": [bid_to_string(int(idx)) for idx in top_indices] if example.has_bid_target else [],
+        "top_bid_probs": [float(bid_probs[idx].item()) for idx in top_indices] if example.has_bid_target else [],
+        "belief_preview_cards": preview_cards,
     }
 
 
-def run(config_path: str = "configs/default.yaml") -> Dict[str, float]:
-    cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+def evaluate_model(model: BiddingBeliefTransformer, examples: List[BeliefExample], cfg: EvalConfig) -> Dict[str, object]:
+    model.eval()
+    device = next(model.parameters()).device
+    examples = examples[: cfg.max_examples]
+    if not examples:
+        return {
+            "examples": 0.0,
+            "bid_accuracy": 0.0,
+            "bid_loss": 0.0,
+            "belief_accuracy": 0.0,
+            "belief_loss": 0.0,
+            "avg_true_owner_prob": 0.0,
+            "avg_owner_entropy": 0.0,
+            "sampler_validity_rate": 0.0,
+            "preview": [],
+        }
+
+    bid_hits = 0
+    bid_total = 0
+    bid_losses: List[float] = []
+    owner_hits = 0
+    owner_total = 0
+    owner_losses: List[float] = []
+    auction_owner_hits = 0
+    auction_owner_total = 0
+    play_owner_hits = 0
+    play_owner_total = 0
+    true_owner_probs: List[float] = []
+    entropies: List[float] = []
+    play_progress_hits: Dict[int, int] = {}
+    play_progress_total: Dict[int, int] = {}
+    preview: List[Dict[str, object]] = []
+    valid_samples = 0
+    sample_attempts = 0
+
+    with torch.no_grad():
+        for example_idx, example in enumerate(examples):
+            token_ids = model.encoder.encode_example(example).unsqueeze(0).to(device)
+            legal_mask = model.encoder.action_mask(
+                example.legal_actions,
+                action_vocab_size=model.config.action_vocab_size,
+            ).unsqueeze(0).to(device)
+            bid_logits, owner_logits = model(token_ids, legal_action_mask=legal_mask)
+            bid_probs = torch.softmax(bid_logits.squeeze(0), dim=-1)
+            owner_probs = torch.softmax(owner_logits.squeeze(0), dim=-1)
+
+            if example.has_bid_target:
+                bid_target = torch.tensor([example.target_bid], dtype=torch.long, device=device)
+                bid_losses.append(float(F.cross_entropy(bid_logits, bid_target).item()))
+                bid_prediction = int(torch.argmax(bid_probs).item())
+                bid_hits += int(bid_prediction == int(example.target_bid))
+                bid_total += 1
+
+            owner_target = torch.tensor(example.card_owners, dtype=torch.long, device=device)
+            owner_mask = torch.tensor(example.belief_target_mask, dtype=torch.bool, device=device)
+            masked_probs = owner_probs[owner_mask]
+            masked_targets = owner_target[owner_mask]
+            if masked_probs.numel() > 0:
+                masked_logits = owner_logits.squeeze(0)[owner_mask]
+                owner_losses.append(float(F.cross_entropy(masked_logits, masked_targets).item()))
+                predictions = torch.argmax(masked_probs, dim=-1)
+                hits = int((predictions == masked_targets).sum().item())
+                total = int(masked_targets.numel())
+                owner_hits += hits
+                owner_total += total
+                if example.phase == "auction":
+                    auction_owner_hits += hits
+                    auction_owner_total += total
+                elif example.phase == "play":
+                    play_owner_hits += hits
+                    play_owner_total += total
+                    progress = int(example.played_count)
+                    play_progress_hits[progress] = play_progress_hits.get(progress, 0) + hits
+                    play_progress_total[progress] = play_progress_total.get(progress, 0) + total
+                true_owner_probs.extend(masked_probs[torch.arange(masked_targets.numel()), masked_targets].tolist())
+                entropies.extend(_owner_entropy(masked_logits).tolist())
+
+            if len(preview) < cfg.preview_examples:
+                preview.append(_preview_for_example(example, bid_probs, owner_probs))
+
+            for sample_idx in range(cfg.sample_count):
+                sampled = sample_hidden_deal(example, owner_logits.squeeze(0), seed=example_idx * 100 + sample_idx)
+                sample_attempts += 1
+                if sampled.valid:
+                    valid_samples += 1
+
+    return {
+        "examples": float(len(examples)),
+        "bid_examples": float(bid_total),
+        "bid_accuracy": float(bid_hits / max(1, bid_total)),
+        "bid_loss": float(sum(bid_losses) / max(1, len(bid_losses))),
+        "belief_accuracy": float(owner_hits / max(1, owner_total)),
+        "auction_belief_accuracy": float(auction_owner_hits / max(1, auction_owner_total)),
+        "play_belief_accuracy": float(play_owner_hits / max(1, play_owner_total)),
+        "belief_loss": float(sum(owner_losses) / max(1, len(owner_losses))),
+        "avg_true_owner_prob": float(sum(true_owner_probs) / max(1, len(true_owner_probs))),
+        "avg_owner_entropy": float(sum(entropies) / max(1, len(entropies))),
+        "owner_entropy_std": float(pstdev(entropies) if len(entropies) > 1 else 0.0),
+        "sampler_validity_rate": float(valid_samples / max(1, sample_attempts)),
+        "play_belief_accuracy_by_played_count": {
+            str(progress): play_progress_hits[progress] / max(1, play_progress_total[progress])
+            for progress in sorted(play_progress_hits)
+        },
+        "preview": preview,
+    }
+
+
+def run(config_path: str = "configs/default.yaml") -> Dict[str, object]:
+    cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     eval_cfg = EvalConfig(**cfg.get("evaluation", {}))
     manifest_path = cfg.get("storage", {}).get("manifest_path", "artifacts/manifest.json")
-    model_cfg = ModelConfig(**cfg.get("model", {}))
-    checkpoint_dir = cfg.get("storage", {}).get("checkpoint_dir", "checkpoints")
+    storage = cfg.get("storage", {})
     if eval_cfg.checkpoint == "checkpoints/latest.pt":
-        eval_cfg.checkpoint = f"{checkpoint_dir.rstrip('/')}/latest.pt"
-    if eval_cfg.baseline_checkpoint == "checkpoints/latest.pt":
-        eval_cfg.baseline_checkpoint = f"{checkpoint_dir.rstrip('/')}/latest.pt"
+        eval_cfg.checkpoint = f"{storage.get('checkpoint_dir', 'checkpoints').rstrip('/')}/latest.pt"
+    if eval_cfg.replay_path == "replays/latest.json":
+        eval_cfg.replay_path = f"{storage.get('replay_dir', 'replays').rstrip('/')}/latest.json"
+
+    model_cfg = BiddingBeliefConfig(**cfg.get("model", {}))
+    model = _load_checkpoint(model_cfg, eval_cfg.checkpoint)
+    examples = load_examples(eval_cfg.replay_path, split="holdout")
+    if not examples:
+        examples = load_examples(eval_cfg.replay_path, split="train")
+    results = evaluate_model(model, examples, eval_cfg)
+
     run_id = f"eval_{int(time.time() * 1_000_000)}"
     run_signature = compute_config_signature(
         config_path,
-        extra={"rounds": eval_cfg.rounds, "seed": eval_cfg.seed, "seed_sequence": eval_cfg.seed_sequence},
+        extra={"checkpoint": eval_cfg.checkpoint, "max_examples": eval_cfg.max_examples},
     )
     config_snapshot = write_config_snapshot(config_path, manifest_path, run_id)
-    primary = evaluate_model(
-        model_cfg,
-        eval_cfg.checkpoint,
-        eval_cfg.rounds,
-        eval_cfg.seed,
-        seed_sequence=eval_cfg.seed_sequence,
-        use_search=eval_cfg.use_search,
-        search_simulations=eval_cfg.search_simulations,
-        rollout_depth=eval_cfg.rollout_depth,
-        num_determinizations=eval_cfg.num_determinizations,
-    )
-    if eval_cfg.seed_sequence:
-        primary["seed_sequence"] = eval_cfg.seed_sequence
-    result = dict(primary)
-    if eval_cfg.baseline_checkpoint:
-        baseline = evaluate_model(
-            model_cfg,
-            eval_cfg.baseline_checkpoint,
-            eval_cfg.rounds,
-            eval_cfg.seed,
-            seed_sequence=eval_cfg.seed_sequence,
-            use_search=eval_cfg.use_search,
-            search_simulations=eval_cfg.search_simulations,
-            rollout_depth=eval_cfg.rollout_depth,
-            num_determinizations=eval_cfg.num_determinizations,
-        )
-        result["baseline_rounds"] = baseline["rounds"]
-        result["baseline_mean_score"] = baseline["mean_score"]
-        result["baseline_win_rate_vs_zero"] = baseline["win_rate_vs_zero"]
-        result["delta_vs_baseline"] = result["mean_score"] - baseline["mean_score"]
-        result["checkpoint_baseline"] = eval_cfg.baseline_checkpoint
-        result["baseline_seed_sequence"] = baseline.get("seed_sequence", None)
-    checkpoint = Path(eval_cfg.checkpoint)
+
+    artifacts_dir = Path(storage.get("artifacts_dir", "artifacts"))
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    preview_path = artifacts_dir / "belief_eval_preview.json"
+    preview_path.write_text(json.dumps(results["preview"], indent=2), encoding="utf-8")
+
     append_manifest_entry(
         manifest_path,
         run_type="eval",
@@ -188,15 +225,15 @@ def run(config_path: str = "configs/default.yaml") -> Dict[str, float]:
         config_path=config_path,
         run_signature=run_signature,
         config_snapshot=config_snapshot,
-        outputs={"checkpoint": str(checkpoint), "rounds": eval_cfg.rounds},
-        metrics=result,
+        outputs={"checkpoint": eval_cfg.checkpoint, "preview_path": str(preview_path)},
+        metrics={k: v for k, v in results.items() if k != "preview"},
         status="ok",
     )
-    return result
+    return results
 
 
 def main() -> None:  # pragma: no cover
-    parser = argparse.ArgumentParser(description="Evaluate bridge checkpoint(s).")
+    parser = argparse.ArgumentParser(description="Evaluate bidding/belief checkpoint.")
     parser.add_argument("--config-path", "--config_path", default="configs/default.yaml")
     args = parser.parse_args()
     print(run(config_path=args.config_path))

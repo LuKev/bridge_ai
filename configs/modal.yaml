@@ -1,12 +1,53 @@
+modal:
+  app_name: "bridge-ai"
+  volume_name: "bridge-ai-artifacts"
+  mount_path: "/vol/bridge-ai"
+
 compute:
-  selfplay_concurrency: 8
-  actor_type: "A10"
-  trainer_type: "A100"
-  evaluator_type: "CPU"
+  selfplay_cpu: 4
+  trainer_gpu: "A10G"
+  evaluator_cpu: 2
   use_spot: false
 
-storage:
-  checkpoint_dir: "/mnt/data/checkpoints"
-  replay_dir: "/mnt/data/replays"
-  artifacts_dir: "/mnt/data/artifacts"
+model:
+  action_vocab_size: 40
+  hidden_dim: 96
+  num_layers: 3
+  num_heads: 4
+  dropout: 0.1
+  max_seq_len: 96
+  owner_classes: 4
 
+storage:
+  checkpoint_dir: "/vol/bridge-ai/checkpoints/belief"
+  replay_dir: "/vol/bridge-ai/replays/belief"
+  artifacts_dir: "/vol/bridge-ai/artifacts/belief"
+  manifest_path: "/vol/bridge-ai/artifacts/belief/manifest.json"
+
+selfplay:
+  seed: 42
+  output_path: "/vol/bridge-ai/replays/belief/latest.json"
+  data_sources: []
+  max_games: 8
+  holdout_fraction: 0.25
+
+training:
+  epochs: 3
+  batch_size: 32
+  iterations: 1
+  lr: 0.0003
+  replay_path: "/vol/bridge-ai/replays/belief/latest.json"
+  init_checkpoint: null
+  checkpoint_name: "latest.pt"
+  ckpt_dir: "/vol/bridge-ai/checkpoints/belief"
+  device: "cuda"
+
+evaluation:
+  checkpoint: "/vol/bridge-ai/checkpoints/belief/latest.pt"
+  replay_path: "/vol/bridge-ai/replays/belief/latest.json"
+  max_examples: 32
+  preview_examples: 3
+  sample_count: 4
+
+pipeline:
+  iterations: 1
