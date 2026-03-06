@@ -514,17 +514,18 @@ Run the new data, training, and evaluation flow remotely once the architecture i
       - and both auction-phase and play-phase belief improved materially during the tournament bootstrap run.
   - repaired the GitHub Actions CI dependency graph on Linux:
     - root cause:
-      - `torch==2.2.2` on Linux x86_64 pulls platform-scoped CUDA-side `nvidia_*` wheels plus `triton`,
-      - and the initial fix still missed the `nvidia-nvjitlink-cu12` transitive dependency pulled by `nvidia-cusparse-cu12` / `nvidia-cusolver-cu12`,
-      - so the Linux smoke workflow on `main` could not complete Bazel analysis until the full transitive closure was pinned in `requirements.txt` and `requirements_lock.txt`,
+      - Bazel `rules_python` was resolving `torch` from PyPI on Linux x86_64,
+      - which pulled the CUDA-enabled wheel and failed at import time on the CPU-only GitHub runner with missing `libcudart.so.12` / `libnvJitLink.so.12`,
+      - so `main` CI needed a CPU-wheel source for `torch`, not more CUDA packages in the lockfile.
     - fix:
-      - added the full Linux-only `torch` dependency closure to both requirement files,
-      - keeping the existing pinned `torch` version instead of re-resolving unrelated packages.
+      - configured `pip.parse` to resolve `torch` from the PyTorch CPU wheel index while leaving the rest of the Python graph on PyPI,
+      - removed the previously added CUDA-only `nvidia_*` and `triton` entries from the requirements files,
+      - kept the existing pinned `torch` version and the rest of the lockfile stable.
     - local verification:
       - `bazel test //:test_env_rules`
       - `bazel run //:smoke -- --config-path=configs/smoke.yaml --manifest-path=artifacts/smoke/manifest.json`
       - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke/manifest.json`
-      - confirmed the lockfile now covers the full Linux x86_64 dependency set declared by `torch==2.2.2`.
+      - confirmed `torch==2.2.2` resolves to CPU wheels from `https://download.pytorch.org/whl/cpu` for both Linux x86_64 and macOS arm64.
 
 ## Immediate next actions
 
