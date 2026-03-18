@@ -1,1 +1,1 @@
-from .evaluator import EvalConfig, evaluate_model, run
+from .evaluator import EvalConfig, evaluate, run

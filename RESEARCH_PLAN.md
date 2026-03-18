@@ -1,467 +1,348 @@
-# Bridge AI Research Plan (Bidding + Belief -> Sampled Deals -> DDS)
+# Bridge AI Research Plan
 
-Status: `pivot approved; first belief-model smoke runs completed locally and on Modal`
-Last updated: 2026-03-06
+Status: `in progress`  
+Last updated: 2026-03-04
 
 ## Scope
 
-This document tracks the research loop:
-- hypotheses
-- experiment designs
-- execution log
-- conclusions
-
-`PLAN.md` is the implementation control plane.
-This file is the scientific control plane.
-
-## Research objective
-
-Determine whether a transformer-centered bridge system can achieve strong practical play by focusing machine learning on the parts it is best suited for:
-- bidding
-- posterior inference over hidden hands
-
-and then using:
-- constrained legal deal sampling
-- and downstream search / DDS-backed cardplay
-
-for actual play decisions.
-
-The explicit modeling target is:
-
-- `p(next_bid | own_hand, full public history)`
-- `p(hidden_cards | own_hand, full public history)`
-
-where full public history includes:
-- seat, dealer, vulnerability, scoring context
-- the full auction history
-- and later any public play information
-
-## Why this direction
-
-The prior monolithic policy/value approach remains useful as a control baseline, but it is no longer the primary research thesis.
-
-The new thesis is:
-- bridge ML should specialize in interpreting public sequences and inferring hidden information
-- the model should provide calibrated uncertainty over unseen cards
-- play strength should come from reasoning over sampled deals, not just from direct cardplay logits
-
-## Bootstrap stance
-
-Use real-game supervision as a bootstrap only, not as the main scaling strategy.
-
-Initial constraint:
-- cap the first supervised bootstrap corpus at `1,000` full games total
-
-Reasoning:
-- enough to teach the model basic bidding syntax and initial hidden-hand correlations
-- small enough that the research does not over-index on offline imitation
-- forces the project to answer the real question: whether self-play plus sampled-deal reasoning can improve beyond a modest supervised warm start
-
-## Active hypotheses
-
-1. **Bidding plus hidden-hand belief is a better transformer target than full end-to-end bridge play**
-   - Sequence modeling over auction history and partial information should be more learnable than direct full-game action prediction.
-2. **Full auction history is essential context for hidden-hand inference**
-   - Posterior quality should degrade materially if the model does not condition on the complete auction sequence.
-3. **Posterior calibration matters more than raw training loss**
-   - A lower loss checkpoint is not useful unless the resulting hidden-hand beliefs are well calibrated and produce valid whole-deal samples.
-4. **Whole-deal sampling is the bridge from ML to practical play**
-   - Per-card marginals alone are insufficient; the system needs legal complete deal samples.
-5. **DDS is valuable only after inference is credible**
-   - A perfect-information solver improves play only if the sampled deals approximate the true posterior over hidden hands.
-6. **Shared-policy self-play should improve both bidding and belief**
-   - If partners use the same model and bidding system, self-play should let conventions co-adapt while also producing exact hidden-hand supervision from simulated full deals.
-
-## Control baseline
-
-The existing monolithic stack remains the control system:
-- monolithic transformer policy/value model
-- self-play
-- determinization-aware search
-- fixed-seed evaluator
-- Modal execution
-
-Use it for:
-- infrastructure validation
-- comparison of downstream playing strength
-- guarding against regressions while the new architecture is immature
-
-Do not treat its training loss as the primary research metric.
-
-## Self-play refinement thesis
-
-Under the new architecture, self-play is still important, but in a different role than before.
-
-It should improve:
-- the bidding policy
-- the hidden-hand posterior
-- partner coordination under a shared bidding system
-
-Assumption for the main line:
-- partners on a side share the same checkpoint and the same bidding policy
-- in the simplest training setup, all four seats may use the same checkpoint
-
-Improvement mechanism:
-1. start from the `bootstrap_1000` supervised checkpoint
-2. generate self-play deals and auctions
-3. use the simulator's known full deal as exact supervision for hidden-card targets
-4. use sampled-deal downstream evaluation to create stronger bidding targets than plain imitation
-5. retrain the bidding and belief heads jointly
-
-Expected virtuous cycle:
-- better bids create more informative auctions
-- more informative auctions sharpen hidden-hand inference
-- sharper inference improves sampled deals
-- better sampled deals improve downstream bid evaluation
-- improved evaluation yields stronger next-round bidding targets
-
-## Research model variants
-
-- `M0`
-  - existing monolithic policy/value baseline
-- `B1`
-  - transformer bidding model only
-- `B2`
-  - shared transformer trunk with bidding head and per-card owner belief head
-- `B3`
-  - `B2` plus auxiliary hand-summary targets
-- `B4`
-  - `B3` plus constrained whole-deal sampling
-- `B5`
-  - `B4` plus downstream search over sampled deals
-- `B6`
-  - `B4` plus DDS-backed play evaluation over sampled deals
-
-## Training targets
-
-Each supervised example should be seat-specific and include:
-- private hand for the acting seat
-- full public history
-  - especially the full auction history
-- target next bid at that decision point
-- target ownership labels for all unseen cards
-
-Optional auxiliary targets:
-- partner/opponent HCP buckets
-- suit-length buckets
-- shape classes
-
-Important distinction:
-- bidding targets are direct supervised labels
-- hidden-card targets come from the true full deal
-- downstream play is not the first training target
-
-## Sampling research question
-
-The central systems question is:
-
-How should a transformer posterior be converted into complete legal deals?
-
-Candidate methods:
-
-1. **Constrained sequential sampling from factorized per-card logits**
-   - easiest first implementation
-   - assign cards one by one while enforcing legal hand counts
-2. **Autoregressive card-owner generation**
-   - stronger joint modeling
-   - more complex implementation
-3. **Project-and-repair from independent marginals**
-   - useful as a baseline
-   - likely weaker and less principled
-
-The first implementation should be method 1.
-
-## Metrics
-
-### Bidding metrics
-
-- next-call accuracy
-- next-call log-loss
-- legal-call masked accuracy
-
-### Belief metrics
-
-- per-card owner accuracy
-- per-card owner log-loss
-- calibration / reliability
-- top-k owner recall for unseen cards
-
-### Sampling metrics
-
-- whole-deal legal validity rate
-- rejection / repair rate
-- posterior sample diversity
-- posterior concentration under fixed auction contexts
-
-### Downstream play metrics
-
-- duplicate score on fixed board sets
-- delta versus monolithic baseline
-- latency per move
-- performance versus simple search without DDS
-
-## Minimum validity rules
-
-- Use held-out data for bidding/belief claims.
-- Keep fixed seed schedules for any sampled-deal comparisons.
-- Do not claim downstream play gains unless:
-  - sampled deals are legal at high rate
-  - belief calibration is measured
-  - DDS/search comparisons use the same board sets
-- Keep manifests and config snapshots for all reported experiments.
-
-## Data sources
-
-Primary near-term sources:
-- existing LIN parsing path in the repository
-- public PBN/LIN corpora already referenced for replay validation
-
-Candidate public sources for the initial `bootstrap_1000` corpus:
-- [Tistis PBN archive](https://www.tistis.nl/pbn/)
-- [bridge_deals_db](https://github.com/ureshvahalia/bridge_deals_db)
-- [BBO Handviewer / LIN documentation](https://www.bridgebase.com/tools/hvdoc.html)
-
-Data requirement for each record:
-- complete deal
-- dealer / vulnerability
-- full auction sequence
-- ideally full play sequence for later extensions
-
-## Experiment phases
-
-### Phase 0 — Control baseline preservation
-
-Purpose:
-- keep the monolithic stack runnable
-- preserve Modal checkpoints and manifests for later comparison
-
-### Phase 1 — Offline bidding model
-
-Purpose:
-- predict next bids from private hand plus full auction context
-
-Success criteria:
-- stable held-out bidding loss
-- sensible legal-call distributions
-- training corpus limited to `1,000` full games
-
-### Phase 2 — Offline hidden-hand belief model
-
-Purpose:
-- predict ownership distributions for unseen cards
-
-Success criteria:
-- per-card owner metrics beat simple heuristics
-- calibration is measurable and reasonable
-- results are achieved without increasing the bootstrap corpus beyond `1,000` games
-
-### Phase 3 — Whole-deal sampler
-
-Purpose:
-- convert beliefs into complete legal deal hypotheses
-
-Success criteria:
-- high legal sample rate
-- low repair rate
-- posterior samples visibly shift with auction context
-
-### Phase 4 — Downstream play over sampled deals
-
-Purpose:
-- use sampled deals for play-time action scoring
-
-Success criteria:
-- stronger play than simple heuristics on fixed boards
-- measurable improvement over non-belief baselines
-
-### Phase 5 — DDS integration
-
-Purpose:
-- evaluate cardplay actions using an external perfect-information solver over sampled deals
-
-Success criteria:
-- DDS interface is stable
-- batched sample evaluation is tractable
-- downstream score improves enough to justify integration complexity
+This document tracks the *research loop* (hypotheses, experiments, and conclusions).
+
+`PLAN.md` tracks implementation and infrastructure milestones.  
+This file tracks scientific progress and experiment execution.
+
+## Real-game corpus sources for bridge replay validation
+
+- `https://www.tistis.nl/pbn/` — public event-level PBN archives with downloadable tournament hand files (many links enumerate tournament `.pbn` bundles).
+- `https://github.com/ureshvahalia/bridge_deals_db` — community-aggregated bridge deal bundles (PBN/LIN/RBN release artifacts) useful for quick bootstrap of offline replay corpora.
+- `https://www.bridgebase.com/tools/hvdoc.html` + `https://www.bridgebase.com/tools/handviewer.html`
+  - BBO handviewer documentation and examples for LIN payloads (`lin`, `myhand`) useful for extracting real deal records (`md`, `mb`, `pc`) for end-to-end env replay checks.
+
+## Ready-to-run research launch (no design work needed)
+
+1. Confirm clean workspace state:
+   - `bazel test //:test_env_rules`
+   - remove any stale outputs (`rm -rf artifacts replays checkpoints`), or keep them and use a new manifest path.
+2. Run smoke and reproducibility checks:
+   - `bazel run //:selfplay -- --config-path=configs/smoke.yaml`
+   - `bazel run //:train -- --config-path=configs/smoke.yaml`
+   - `bazel run //:eval -- --config-path=configs/smoke.yaml`
+   - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke/manifest.json`
+3. Run one-orbit pipeline:
+   - `bazel run //:pipeline -- --config-path=configs/smoke.yaml`
+4. Start first comparative variant:
+   - copy `configs/smoke.yaml` to `configs/smoke_search.yaml`
+   - set search-related fields:
+     - `selfplay.use_search: true`
+     - `evaluation.use_search: true`
+     - `selfplay.search_simulations: 4`
+     - `evaluation.search_simulations: 4`
+     - `selfplay.determinization_count: 1` (or `4` for deeper study)
+   - run `bazel run //:pipeline -- --config-path=configs/smoke_search.yaml`
+
+## Primary research objective
+
+Demonstrate whether a monolithic, transformer-based bridge policy/value model trained mostly by self-play and determinized search can match or exceed strong bridge baselines under reproducible experimental conditions.
+
+## Core hypotheses
+
+1. **Monolithic policy/value representation is sufficient**
+   - A single transformer with unified action space can match separated bidding/play baselines with stable phase conditioning.
+2. **Self-play plus IS-Determinization improves over warm-start behavior**
+   - Repeated on-policy self-play with search-generated policy targets should lift performance over random/naive or static behavior cloning baselines.
+3. **Determinization depth/sample count controls quality-latency tradeoff**
+   - More determinization samples improve decision stability with diminishing returns.
+4. **Fixed-deal reproducibility is required**
+   - Reproducible manifests, signed run signatures, and config snapshots are necessary for trustworthy comparisons.
+
+## Baseline model variants under test
+
+- V1: no search, no determinization (argmax policy only).
+- V2: model + deterministic rollout.
+- V3: model + IS-MCTS root rollout using determinization.
+- V4: model + larger determinization + wider search depth.
+
+## Experimental design and metrics
+
+For each candidate run:
+
+- Use fixed seeds/deal sets when comparing checkpoints.
+- Log:
+  - `manifest.json` entries (reproducibility metadata),
+  - run-level config snapshots (`artifacts/*/run_configs/<run_id>.yaml`),
+  - fixed seed sequence and result summary.
+- Report:
+  - mean final score
+  - score variance / standard deviation
+  - win rate vs zero
+  - optional `delta_vs_baseline`
+
+### Minimum validity rules
+
+- Same `run_signature` discipline for comparable settings.
+- Same seed list or explicit seed schedule in experiment config.
+- For engineering sanity checks: `rounds=1`, `num_episodes=1`.
+- For scientific claims: `>=100` fixed deals in evaluation.
+- All new manifest entries must pass `manifest_check`.
+
+## Experiment execution framework
+
+- Run via Bazel targets only (no direct `python` module execution):
+  - `//:selfplay`
+  - `//:train`
+  - `//:eval`
+  - `//:pipeline`
+  - `//:smoke`
+  - `//:manifest_check`
+- Set manifest namespace per sweep:
+  - baseline: `artifacts/baseline/manifest.json`
+  - search study: `artifacts/search_v1/manifest.json`
+  - deterministic variants: `artifacts/determinization_v1/manifest.json`
+- Keep all output directories explicit in each config (`storage.manifest_path`, `storage.replay_dir`, `storage.checkpoint_dir`).
+
+  - Keep per-run model continuity by setting `init_checkpoint` or loading latest file where needed.
+
+## Run templates
+
+- **Smoke baseline (no search)**
+  - config: `configs/smoke.yaml`
+  - command: `bazel run //:pipeline -- --config-path=configs/smoke.yaml`
+  - expectations:
+    - one successful `selfplay` entry
+    - one successful `train` entry
+    - one successful `eval` entry
+    - manifest passes validation
+- **Monolithic + search**
+  - config: `configs/smoke_search.yaml` (create from smoke)
+  - same invocation
+  - expectations:
+    - no search crashes
+    - score trend consistent across repeated seeds when scale increases
+- **Determinization ablation**
+  - vary:
+    - `selfplay.determinization_count`
+    - `evaluation.num_determinizations`
+    - `selfplay.search_simulations`
+    - `evaluation.search_simulations`
+  - run as pipeline per cell and compare against baseline manifest.
+
+## Planned experiments (next phase)
+
+1. **Seeded smoke baseline**
+   - confirm full loop completion and manifest integrity.
+2. **Checkpoint continuity validation**
+   - verify that self-play, learner resume, and snapshot promotion all use the active checkpoint lineage rather than fresh starts.
+3. **Duplicate head-to-head checkpoint trend**
+   - checkpoint A vs checkpoint B on identical boards with seat swaps.
+4. **Search-depth and determinization ablations**
+   - compare V3/V4 candidates on fixed duplicate board sets.
+5. **Action-space coupling study**
+   - long-term, compare monolithic policy against phase-separated baselines.
 
 ## Experiment ledger
 
-### 2026-03-01 to 2026-03-05
+### 2026-03-10
+- Completed self-play strength infrastructure verification:
+  - `bazel test //:test_env_rules` passes with real execution of env + infrastructure regressions.
+  - `bazel test //:test_ui` passes.
+  - `bazel run //:smoke -- --config-path=configs/smoke.yaml --manifest-path=artifacts/smoke/manifest.json` passes with `manifest_issues=[]`.
+  - `bazel run //:pipeline -- --config-path=configs/smoke_rating.yaml` passes for two actor/learner/eval iterations in an isolated namespace.
+- `configs/smoke_rating.yaml` verification details:
+  - iteration 0:
+    - self-play uses no prior checkpoint,
+    - training emits `/Users/kevin/.codex/worktrees/f2ee/bridge_ai/checkpoints/smoke_rating/iter_000001.pt`,
+    - evaluation falls back to single-model fixed-suite scoring (`mean_score=-750.0` on seed `5000`).
+  - iteration 1:
+    - self-play auto-loads the promoted latest checkpoint,
+    - training resumes from the prior snapshot and emits `/Users/kevin/.codex/worktrees/f2ee/bridge_ai/checkpoints/smoke_rating/iter_000002.pt`,
+    - evaluation switches to duplicate checkpoint-vs-checkpoint mode against `iter_000001.pt`,
+    - duplicate result: `pair_diff_total=650.0` on the fixed board suite,
+    - Elo-style ratings update to:
+      - `iter_000002.pt`: `1512.0`
+      - `iter_000001.pt`: `1488.0`
+    - rating artifacts written to:
+      - `/Users/kevin/.codex/worktrees/f2ee/bridge_ai/artifacts/smoke_rating/ratings/current.json`
+      - `/Users/kevin/.codex/worktrees/f2ee/bridge_ai/artifacts/smoke_rating/ratings/history.jsonl`
+    - duplicate match artifacts written under:
+      - `/Users/kevin/.codex/worktrees/f2ee/bridge_ai/artifacts/smoke_rating/evaluation/`
+- Reproducibility checks:
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke_rating/manifest.json` returns `manifest_issues=[]`.
+  - runtime path resolution now writes relative `artifacts/`, `replays/`, and `checkpoints/` into the repository workspace under Bazel rather than Bazel execroot.
+- Conclusion:
+  - checkpoint promotion, replay windows, duplicate evaluation, and Elo history are now functional end to end;
+  - the next experiments should increase the number of paired boards and then layer search/determinization ablations on the same harness.
+- Added real Modal-continuation tooling:
+  - `bazel build //:modal_continue //:league_eval` passes,
+  - new regression coverage for legacy checkpoint import, initial baseline creation, and pairwise league reporting is covered by `bazel test //:test_env_rules`.
+- Began non-smoke continuation from the preserved 2000-step checkpoint using `configs/modal_real_scale3000.yaml`:
+  - source checkpoint: `/Users/kevin/projects/bridge_ai/checkpoints/local_real_scale2000/latest.pt`
+  - Modal launcher imports it as immutable `iter_002000.pt` and seeds `latest.pt` in Modal-backed storage,
+  - detached Modal app id: `ap-GcJBky40zdgqY8jAzM5xR7`
+  - confirmed remote progress via Modal volume manifest:
+    - first resumed train block reached `iter_002200.pt`
+      - `train_1773145070936817`
+      - learner wall-clock: about `2254.7` seconds for 200 learner steps
+    - second resumed train block reached `iter_002400.pt`
+      - `train_1773147335727418`
+      - learner wall-clock: about `2497.7` seconds for 200 learner steps
+    - quick duplicate evals on Modal are running after each block and rating artifacts are being updated remotely.
+- Modal GPU status:
+  - a GPU launch with `nonpreemptible=true` failed immediately because Modal forbids that combination,
+  - a GPU launch without `nonpreemptible` also stopped before user-code execution in this workspace,
+  - an independent minimal GPU probe reproduced the same `app is stopped or disabled` behavior, so GPU capacity/access in this workspace is the blocking external constraint.
+- Interpretation:
+  - the Modal CPU path is now operational and reproducible,
+  - the final `iter_003000.pt` checkpoint is still in flight and will take multiple additional hours at the observed CPU throughput,
+  - any local league output produced before `iter_003000.pt` exists should be treated as provisional only, since `scale3000` still resolves to the current `latest.pt` identity.
 
-Completed under the old monolithic-baseline direction:
-- environment, legality, scoring, and replay validation
-- monolithic transformer policy/value training path
-- determinization-aware search
-- self-play / train / eval / pipeline orchestration
-- manifest validation
-- real LIN replay tests
-- Modal smoke and scale benchmarking
-- search-guided smoke validation
+### 2026-03-01
+- Executed end-to-end tiny-chain smoke on local machine using temporary tiny configs:
+  - `selfplay_1772362922134331` (`/tmp/bridge_ai_tiny_abs.yaml`)
+    - `episodes=1`, `steps=60`, `status=ok`
+  - `train_1772362982182016` (`/tmp/bridge_ai_tiny_abs.yaml`)
+    - `loss=2050.2269743124643`, `items=60`, `status=ok`
+  - `eval_1772363031320711` (`/tmp/bridge_ai_tiny_eval_nosearch.yaml`)
+    - `mean_score=650.0`, `win_rate_vs_zero=1.0`, `rounds=1`, `status=ok`
+  - `selfplay_1772363076633062` + `train_1772363080301671` + `eval_1772363084495160` (`/tmp/bridge_ai_tiny_pipeline.yaml`)
+    - pipeline completed, `eval.mean_score=0.0`
+  - `selfplay_1772363098694376` + `train_1772363108351559` + `eval_1772363111782472` (`/tmp/bridge_ai_tiny_pipeline_search.yaml`)
+    - search-enabled pipeline completed, `eval.mean_score=0.0`
+- Conclusion: pipeline and manifest workflow are functional; results are not scientifically significant at sample size 1.
+- Ran full baseline verification pass for smoke and manifest checks (current date):
+  - `bazel test //:test_env_rules` now passes after BUILD test target fix.
+  - `bazel run //:selfplay -- --config-path=configs/smoke.yaml` exits successfully.
+  - `bazel run //:train -- --config-path=configs/smoke.yaml` exits with `FileNotFoundError: replays/smoke/latest.json` when run standalone (depends on prior replay output in same invocation scope).
+  - `bazel run //:eval -- --config-path=configs/smoke.yaml` exits successfully, `mean_score=-1700.0`, `win_rate_vs_zero=0.0`.
+  - `bazel run //:pipeline -- --config-path=configs/smoke.yaml` exits successfully, `loss=5.605102479457855`, `eval.mean_score=-350.0`.
+  - `bazel run //:smoke -- --config-path=configs/smoke.yaml --manifest-path=artifacts/smoke/manifest.json` exits successfully.
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/manifest.json` exits clean, `manifest_issues=[]`.
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke/manifest.json` exits clean, `manifest_issues=[]`.
+- Immediate note: standalone `train` requires compatible replay artifact locality; full-scope smoke/pipeline runs are the reliable loop until we explicitly add cross-invocation output persistence.
+- Ran first local non-smoke pipeline with explicit per-sweep namespaces:
+  - `configs/local_real.yaml` (created in-repo for this run):
+    - `storage.replay_dir: replays/local_real`
+    - `storage.checkpoint_dir: checkpoints/local_real`
+    - `storage.manifest_path: artifacts/local_real/manifest.json`
+    - model: `hidden_dim=128`, `num_layers=4`, `num_heads=4`
+    - episodes: 4, search disabled
+    - evaluation rounds: 4
+  - Command result:
+    - `bazel run //:pipeline -- --config-path=configs/local_real.yaml`
+    - `selfplay_ok=True`, `train_ok=True`
+    - `eval.mean_score=0.0`, `win_rate_vs_zero=0.0`, `score_std=0.0`
+    - `loss=6.355249804835165`
+  - Manifest integrity:
+    - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real/manifest.json`
+    - `manifest_issues=[]`
+- Ran first scaled local training sweep:
+  - `configs/local_real_iter1.yaml`:
+    - selfplay: `num_episodes=16`, `max_steps=120`, `search_simulations=2`, `determinization_count=2`
+    - training: `iterations=3`, `epochs=2`, `batch_size=16`
+    - evaluation: `rounds=16`, fixed seed sequence `[7..22]`
+    - pipeline: `iterations=3`
+  - `bazel run //:pipeline -- --config-path=configs/local_real_iter1.yaml`
+    - `selfplay_ok=True`, `train_ok=True`, `eval_ok=True` for all 3 iterations
+    - eval per iteration: `mean_score=0.0`, `win_rate_vs_zero=0.0`, `score_std=0.0`
+    - first-iteration loss trace:
+      - `5.9763`, `4.6164`
+    - second-iteration loss trace:
+      - `3.3288`, `2.8845`
+    - third-iteration loss trace:
+      - `2.7344`, `2.6565`
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_iter1/manifest.json`
+  - `manifest_issues=[]`
 
-These runs are still useful, but now only as control baselines.
+- Ran local large-iteration scaling attempt:
+  - config: `configs/local_real_iter4.yaml`
+  - run command: `bazel run //:pipeline -- --config-path=configs/local_real_iter4.yaml`
+  - settings: 8 self-play episodes, 80 max steps, `training.iterations=3000`, batch size 64, no search
+  - status: interrupted at iteration 905 with `KeyboardInterrupt` (intentional checkpoint/CPU budget pause)
+  - observed loss trend:
+    - iter 0: `6.4052`
+    - iter 100: `0.9596`
+    - iter 200: `0.2805`
+    - iter 500: `0.10399`
+    - iter 800: `0.06699`
+    - iter 900: `0.06681`
+    - iter 905: `0.06376`
+  - interpretation: monotonic improvement from ~6.4 to ~0.06 by 900 iterations with no divergence; run was interrupted before checkpoint emit could be observed in manifest (checkpoint/iteration persistence needed stronger guarantees on resume).
+  - manifest check:
+    - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_iter4/manifest.json`
+    - `manifest_issues=[]`
+- Follow-up: this confirms the local loop is runnable at a larger scale and produces stable per-iteration persistence behavior.
+- 2026-03-18:
+  - Queried Modal workspace billing directly through `modal.billing.workspace_billing_report(...)` for March 2026.
+  - observed spend:
+    - workspace month-to-date: `$5.07589633`
+    - detached continuation app `ap-GcJBky40zdgqY8jAzM5xR7`: `$2.07796300`
+  - observed detached continuation progress from the Modal volume:
+    - remote snapshots currently present: `iter_002000.pt`, `iter_002200.pt`, `iter_002400.pt`
+    - last recorded event is `selfplay_1773149842931819`; no `iter_002600.pt` exists yet.
+  - estimate:
+    - completed `2000 -> 2400` cost implies roughly `$1.03898` per 200-step learner block
+    - remaining `2400 -> 3000` continuation is about `$3.11694` on the current 32-core CPU path
+  - interpretation:
+    - this does not look like hard credit exhaustion on a Starter workspace with `$30 / month` included compute, though a separate workspace budget cap cannot be ruled out from the CLI alone
+    - the previous retry path would have recomputed the first 400 learner steps; `configs/modal_real_scale3000.yaml` plus `modal_continue.py` now use `modal.target_step: 3000` and `force_bootstrap: false` so reruns only schedule the remaining blocks from the saved volume.
 
-### 2026-03-06
-
-Research direction changed:
-- monolithic full-move modeling is no longer the primary research target
-- the primary target is now:
-  - transformer bidding prediction
-  - transformer hidden-hand inference conditioned on full auction history
-  - constrained whole-deal sampling
-  - downstream sampled-deal play logic
-  - later DDS-backed cardplay evaluation
-
-Interpretation:
-- the repository's earlier experiments were not wasted
-- they established the environment, orchestration, and control baseline needed for the new path
--
-  revised research stance:
-  - supervised bootstrap is capped at `1,000` full games
-  - self-play is now expected to improve both bidding and hidden-hand inference
-  - shared-policy partnerships are the default assumption for the main training loop
-- Implemented and ran the first end-to-end bidding-plus-belief smoke pipeline:
-  - command:
-    - `bazel run //:pipeline -- --config-path=configs/smoke.yaml`
-  - setup:
-    - bootstrap data from full auction records
-    - small transformer (`hidden_dim=64`, `layers=2`, `heads=2`)
-    - constrained whole-deal sampler over owner logits
+- Ran clean 2000-iteration local stretch from new namespace:
+  - config: `configs/local_real_scale2000.yaml`
+  - run command: `bazel run //:pipeline -- --config-path=configs/local_real_scale2000.yaml`
+  - settings:
+    - `selfplay.num_episodes: 8`, `selfplay.max_steps: 80`, search disabled
+    - `training.iterations: 2000`, `training.batch_size: 64`, `training.checkpoint_every: 100`
+    - `evaluation.rounds: 4`
   - result:
-    - `examples=23`
-    - `bid_accuracy=0.5652`
-    - `bid_loss=2.0753`
-    - `belief_accuracy=0.2910`
-    - `belief_loss=1.3865`
-    - `avg_true_owner_prob=0.2540`
-    - `avg_owner_entropy=1.3717`
-    - `sampler_validity_rate=1.0`
-  - interpretation:
-    - the new architecture is now executable end to end,
-    - the bidding head is already learning non-uniform legal distributions on tiny data,
-    - the belief head is still near weak-baseline quality, which is expected at this scale,
-    - the sampler is structurally sound because it produced valid whole deals for every smoke attempt.
-- Ran the new architecture on Modal:
-  - smoke config:
-    - `configs/modal_smoke.yaml`
-    - result:
-      - `examples=16`
-      - `bid_accuracy=0.5000`
-      - `bid_loss=2.1513`
-      - `belief_accuracy=0.1859`
-      - `belief_loss=1.4083`
-      - `avg_true_owner_prob=0.2467`
-      - `sampler_validity_rate=1.0`
-  - small GPU config:
-    - `configs/modal.yaml`
-    - result:
-      - `examples=17`
-      - `bid_accuracy=0.5882`
-      - `bid_loss=1.9502`
-      - `belief_accuracy=0.2760`
-      - `belief_loss=1.3690`
-      - `avg_true_owner_prob=0.2563`
-      - `sampler_validity_rate=1.0`
-  - interpretation:
-    - the new stack is Modal-compatible already,
-    - a small remote GPU trainer is enough to prove the code path works,
-    - output distributions are still weak but visibly non-uniform and inspectable,
-    - and the constrained sampler remains stable remotely.
-- Built and trained the first real `bootstrap_1000` tournament dataset:
-  - source:
-    - `bridge_deals_db` release asset `bridge_deals.tar.gz`
-  - selected events:
-    - `BermudaBowl2023`
-    - `VeniceCup2023`
-    - `dOrsiTrophy2023`
-    - `WuhanCup2023`
-  - selection policy:
-    - `250` room records per event
-    - `1000` total room records
-  - local dataset build result:
-    - `train_examples=9289`
-    - `holdout_examples=2378`
-  - Modal training run:
-    - config: `configs/modal_bootstrap1000.yaml`
-    - epochs: `10`
-    - trainer: small GPU-backed Modal run
-  - final held-out evaluation:
-    - `examples=1024`
-    - `bid_accuracy=0.7217`
-    - `bid_loss=0.9524`
-    - `belief_accuracy=0.3767`
-    - `belief_loss=1.2708`
-    - `avg_true_owner_prob=0.2924`
-    - `sampler_validity_rate=1.0`
-  - trajectory over training:
-    - epoch `0`:
-      - `bid_accuracy=0.0000`
-      - `belief_accuracy=0.2599`
-    - epoch `10`:
-      - `bid_accuracy=0.7217`
-      - `belief_accuracy=0.3767`
-  - interpretation:
-    - the expected direction held:
-      - real tournament bootstrap improved both bid accuracy and belief accuracy
-    - bidding improved much more sharply than belief, which matches the research expectation
-    - belief improved from near-random to clearly above random, but is still far from "strong inference"
-    - the sampler remained valid throughout, so the main remaining problem is posterior quality, not structural legality.
-- Upgraded the measurement path to track belief during play as public cards are revealed:
-  - dataset examples now include play-phase states with:
-    - visible dummy cards
-    - played-card history
-    - current trick context
-  - evaluator now reports:
-    - `auction_belief_accuracy`
-    - `play_belief_accuracy`
-    - `play_belief_accuracy_by_played_count`
-  - reran the Modal `bootstrap_1000` training under the upgraded path.
-- Upgraded Modal `bootstrap_1000` result:
-  - final held-out metrics:
-    - `bid_accuracy=0.7373`
-    - `belief_accuracy=0.3748`
-    - `auction_belief_accuracy=0.3772`
-    - `play_belief_accuracy=0.3728`
-  - trajectory:
-    - epoch `0`:
-      - `bid_accuracy=0.1994`
-      - `auction_belief_accuracy=0.2637`
-      - `play_belief_accuracy=0.2460`
-    - epoch `10`:
-      - `bid_accuracy=0.7373`
-      - `auction_belief_accuracy=0.3772`
-      - `play_belief_accuracy=0.3728`
-  - interpretation:
-    - this confirms the earlier intuition that belief should be measured as a time-evolving posterior, not just at auction time,
-    - and the current model improves in both auction and play phases over training,
-    - although play-phase belief remains only modestly above the rough random baseline and still needs further work.
+    - training reached `iteration: 1999` successfully (full 2000 iterations)
+    - loss improved from ~`6.50` at iter 0 to `0.0313774056` at iter 1999
+    - `eval mean_score=-187.5`, `win_rate_vs_zero=0.0`, `score_std=188.33148966649205`
+    - `manifest` entries for `selfplay`, `train`, and `eval` all `status=ok`
+    - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_scale2000/manifest.json` passed (`manifest_issues=[]`)
+  - checkpoint behavior:
+    - `training.checkpoint_every=100` writes `checkpoints/local_real_scale2000/latest.pt` at the configured cadence and on completion.
+- 2026-03-04:
+  - Added centralized LIN parser/replay utilities in `src/bridge_ai/data/lin_parser.py`:
+    - decode/parse real LIN records (`md`, `mb`, `pc`, vulnerability, claims),
+    - reconstruct initial states with dealer/claims, and
+    - replay complete games with legal-action assertions.
+- Updated `tests/test_bridge_env.py` to consume that parser for `test_replay_of_real_lin_games_no_illegal_action` and enforce strict terminal/non-terminal invariants per fixture.
+- Next immediate action: add a corpus manifest + fixture loader so multiple downloaded files can be fed into the same strict replay path.
+- Added a curated 20-record real LIN fixture at `tests/fixtures/real_lin_records.txt` and fixed explicit 4-hand LIN parsing support (`md` hand sections with 4 hands now parse correctly).
+
+### 2026-03-03
+- Added a real-game regression path for full end-to-end replay validation:
+  - parser support for key LIN tokens (`md`, `mb`, `pc`, `sv`, `mc`) is present in `tests/test_bridge_env.py`.
+  - added fixed real-world fixtures (BBO-format LIN strings) under `_REAL_LIN_GAME_RECORDS`.
+  - strict terminal/non-terminal expectations are now enforced per fixture.
+  - this test layer is intended as the first guardrail before scaling data-driven sweeps.
 
 ## Immediate next experiments
 
-1. Preserve the active Modal run as a control checkpoint and manifest namespace.
-2. Improve belief calibration and offline metrics on held-out examples.
-3. Add self-play refinement with shared-policy partnerships.
-4. Compare sampled-deal quality before any DDS claim.
-5. Add DDS-backed downstream evaluation only after the sampler is stable.
+1. Let the detached Modal CPU continuation finish through `iter_003000.pt`:
+   - current confirmed remote snapshots: `iter_002200.pt`, `iter_002400.pt`,
+   - sync local artifacts once the detached app completes.
+2. Run the final non-smoke checkpoint league after `iter_003000.pt` exists locally:
+   - `initial` vs `scale2000` vs `scale3000`,
+   - fixed `gating` suite first, `ladder` only if the ranking signal is directionally consistent.
+3. If Modal GPU capacity becomes available later, rerun the same 2000 -> 3000 continuation on GPU and compare wall-clock plus resulting checkpoint strength against the CPU path.
+4. Only after the real 3000-step checkpoint comparison is complete, return to search and determinization ablations on the duplicate harness.
 
 ## Failure modes to monitor
 
-- model learns bidding patterns but hidden-card beliefs remain poorly calibrated
-- beliefs collapse to unrealistic independent marginals
-- sampled deals are legal only after heavy ad hoc repair
-- sampled deals ignore auction information in practice
-- DDS appears strong only because evaluation is too tied to solver-friendly boards rather than realistic posterior quality
-- the supervised bootstrap corpus becomes the de facto training strategy instead of a small warm start
+- Illegal-action leakage from token/state representation to policy head.
+- Contract/bidding drift from self-play-only optimization.
+- Determinization consistency bugs in hidden-card completion.
+- Scoring regressions from rule edge cases.
+- Reproducibility drift (snapshot missing or mismatched seeds).
 
 ## Decision criteria
 
-Continue if:
-- held-out bidding metrics are stable
-- belief calibration is measurable
-- sampled deals are legal at high rate
-- downstream play improves on fixed boards
-- self-play refinement improves over the `bootstrap_1000` checkpoint
-
-Pause or rework if:
-- auction context does not materially improve posterior quality
-- sampled deals remain inconsistent without brittle repair logic
-- DDS integration cost dominates before belief quality is proven
+- Continue once:
+  - smoke/pipeline runs are green
+  - manifest validation is clean
+  - duplicate checkpoint-vs-checkpoint evaluation is producing stable paired results
+  - first rating trend shows newer checkpoints beating an anchored baseline in a repeatable direction.
+- Pause or rework if:
+  - repeated illegal-action fallbacks dominate for multiple seeds
+  - legal-move generation repeatedly fails under search mode
+  - duplicate board variance remains too high to separate checkpoints
+  - newer checkpoints fail to beat the anchored baseline across repeated paired suites.

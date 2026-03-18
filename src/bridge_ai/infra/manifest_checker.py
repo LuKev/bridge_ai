@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 import yaml
 from bridge_ai.data.manifest import validate_manifest
+from bridge_ai.common.runtime_paths import resolve_runtime_path
 
 
 def run(manifest_path: str = "artifacts/manifest.json"):
@@ -23,7 +24,7 @@ def main() -> None:  # pragma: no cover
     args = _parse_args()
     manifest_path = args.manifest_path
     if args.config_path:
-        cfg = yaml.safe_load(Path(args.config_path).read_text(encoding="utf-8"))
+        cfg = yaml.safe_load(resolve_runtime_path(args.config_path).read_text(encoding="utf-8"))
         manifest_path = cfg.get("storage", {}).get("manifest_path", args.manifest_path)
     issues = run(manifest_path)
     if issues:

@@ -10,6 +10,7 @@ from typing import List
 import yaml
 
 from bridge_ai.eval.evaluator import run as run_eval
+from bridge_ai.common.runtime_paths import resolve_runtime_path
 from bridge_ai.selfplay.runner import run as run_selfplay
 from bridge_ai.training.train_loop import train
 
@@ -24,28 +25,29 @@ class PipelineIterationResult:
 
 
 def run_pipeline(config_path: str = "configs/default.yaml", iterations: int | None = None) -> List[dict]:
-    cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    config_source = resolve_runtime_path(config_path)
+    cfg = yaml.safe_load(config_source.read_text(encoding="utf-8"))
     iteration_count = iterations if iterations is not None else cfg.get("pipeline", {}).get("iterations", 1)
 
     results: List[dict] = []
     for iteration in range(max(1, iteration_count)):
         out = {"iteration": iteration}
         try:
-            run_selfplay(config_path=config_path)
+            run_selfplay(config_path=str(config_source))
             out["selfplay_ok"] = True
         except Exception as exc:  # pragma: no cover
             out["selfplay_ok"] = False
             out["selfplay_error"] = str(exc)
 
         try:
-            train(config_path=config_path)
+            train(config_path=str(config_source))
             out["train_ok"] = True
         except Exception as exc:  # pragma: no cover
             out["train_ok"] = False
             out["train_error"] = str(exc)
 
         try:
-            out["eval"] = run_eval(config_path=config_path)
+            out["eval"] = run_eval(config_path=str(config_source))
             out["eval_ok"] = True
         except Exception as exc:  # pragma: no cover
             out["eval_ok"] = False

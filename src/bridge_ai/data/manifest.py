@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from bridge_ai.common.runtime_paths import resolve_runtime_path
+
 
 @dataclass
 class ManifestEntry:
@@ -27,7 +29,7 @@ class ManifestEntry:
 
 def compute_config_signature(config_path: str, *, extra: Dict[str, Any] | None = None) -> str:
     """Build a deterministic hash describing this run configuration."""
-    source = Path(config_path)
+    source = resolve_runtime_path(config_path)
     payload = {
         "config_path": str(source.resolve()),
         "config_text": source.read_text(encoding="utf-8"),
@@ -41,8 +43,8 @@ def compute_config_signature(config_path: str, *, extra: Dict[str, Any] | None =
 
 def write_config_snapshot(config_path: str, manifest_path: str, run_id: str) -> str:
     """Persist a frozen config copy for this run and return snapshot path."""
-    source = Path(config_path)
-    destination = Path(manifest_path).parent / "run_configs" / f"{run_id}.yaml"
+    source = resolve_runtime_path(config_path)
+    destination = resolve_runtime_path(manifest_path).parent / "run_configs" / f"{run_id}.yaml"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     return str(destination)
@@ -61,7 +63,7 @@ def append_manifest_entry(
     status: str = "ok",
     error: Optional[str] = None,
 ) -> None:
-    path = Path(manifest_path)
+    path = resolve_runtime_path(manifest_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = load_manifest(path)
 
@@ -72,7 +74,7 @@ def append_manifest_entry(
         run_id=run_id,
         start_time=start,
         end_time=now,
-        config_path=config_path,
+        config_path=str(resolve_runtime_path(config_path)),
         run_signature=run_signature,
         config_snapshot=config_snapshot,
         outputs=outputs,
@@ -86,7 +88,7 @@ def append_manifest_entry(
 
 
 def load_manifest(path: Path | str) -> List[ManifestEntry]:
-    path = Path(path)
+    path = resolve_runtime_path(path)
     if not path.exists():
         return []
     raw = json.loads(path.read_text(encoding="utf-8"))

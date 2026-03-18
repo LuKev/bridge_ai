@@ -1,5 +1,1 @@
-from .bidding_belief_transformer import (
-    BiddingBeliefConfig,
-    BiddingBeliefEncoder,
-    BiddingBeliefTransformer,
-)
+from .monolithic_transformer import BridgeMonolithTransformer, ModelConfig

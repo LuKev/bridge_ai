@@ -123,8 +123,9 @@ def _parse_lin_hands(raw: str):
     if len(declared) < 3:
         raise ValueError(f"not enough hands in md token: {raw!r}")
 
-    order_seed = 0 if dealer is None else int(dealer)
-    hand_order = [Seat((order_seed + i) % 4) for i in range(4)]
+    # BBO `md` encodes the dealer in the first digit, but the comma-separated
+    # hand payloads are listed in fixed seat order: South, West, North, East.
+    hand_order = [Seat.SOUTH, Seat.WEST, Seat.NORTH, Seat.EAST]
 
     hands: Dict[Seat, Tuple] = {}
     seen_indices = set()

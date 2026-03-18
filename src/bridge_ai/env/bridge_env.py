@@ -387,27 +387,31 @@ class BridgeEnv:
         led_card = index_to_card(trick_cards[0][1])
         led_suit = led_card.suit
         trump_suit = contract.strain if contract.strain < 4 else None
+        best_seat = trick_cards[0][0]
+        best_card = led_card
 
-        winner_seat = trick_cards[0][0]
-        winner_card = led_card
+        def _beats(candidate: Card, incumbent: Card) -> bool:
+            if trump_suit is not None:
+                if candidate.suit == trump_suit and incumbent.suit != trump_suit:
+                    return True
+                if candidate.suit != trump_suit and incumbent.suit == trump_suit:
+                    return False
+                if candidate.suit == trump_suit and incumbent.suit == trump_suit:
+                    return candidate.rank > incumbent.rank
+            if candidate.suit == led_suit and incumbent.suit != led_suit:
+                return True
+            if candidate.suit != led_suit:
+                return False
+            if incumbent.suit != led_suit:
+                return True
+            return candidate.rank > incumbent.rank
 
         for seat, card_idx in trick_cards[1:]:
             card = index_to_card(card_idx)
-            if trump_suit is not None:
-                if card.suit == trump_suit and winner_card.suit != trump_suit:
-                    winner_seat, winner_card = seat, card
-                    continue
-                if card.suit == trump_suit and winner_card.suit == trump_suit and card.rank > winner_card.rank:
-                    winner_seat, winner_card = seat, card
-                    continue
+            if _beats(card, best_card):
+                best_seat, best_card = seat, card
 
-            if winner_card.suit == led_suit:
-                if card.suit == led_suit and card.rank > winner_card.rank:
-                    winner_seat, winner_card = seat, card
-            elif card.suit == led_suit:
-                winner_seat, winner_card = seat, card
-
-        return winner_seat
+        return best_seat
 
     def _final_score(self, state: BridgeState) -> float:
         if state.contract is None:

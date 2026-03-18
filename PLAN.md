@@ -1,15 +1,15 @@
-# Bridge AI Execution Plan (Bidding + Belief -> Sampled Deals -> DDS)
+# Bridge AI Research Plan (Monolithic Self-Play)
 
-Status: `baseline stack implemented; architecture pivot approved; next implementation phase is bidding-plus-belief`
-Owner: Kevin (primary), Codex (execution)
-Last updated: 2026-03-06
+Status: `implementation complete; research execution is now initialized`
+Owner: Kevin (primary), Codex (execution)  
+Last updated: 2026-03-04
 
 ## Rule
-
-- `PLAN.md` is the implementation control plane.
-- Update this file after each major implementation step or direction change.
-- Update `RESEARCH_PLAN.md` after experiments, results, or hypothesis changes.
-- Keep Bazel as the main local execution entrypoint:
+- After each completed step or any planning revision, update this document before moving to the next major task.
+- Keep this document as the implementation control plane; any module-level decision should be traceable here.
+- For experimental methodology, run hypotheses, and result tracking, use `/Users/kevin/projects/bridge_ai/RESEARCH_PLAN.md`.
+- After running experiments and logging outcomes or conclusions, update `RESEARCH_PLAN.md` immediately.
+- Keep Bazel binaries invocation-compatible with the documented flags:
   - `bazel run //:selfplay -- --config-path=...`
   - `bazel run //:train -- --config-path=...`
   - `bazel run //:eval -- --config-path=...`
@@ -17,536 +17,404 @@ Last updated: 2026-03-06
   - `bazel run //:smoke -- --config-path=... --manifest-path=...`
   - `bazel run //:manifest_check -- --manifest-path=...`
 
-## Project objective
+## Project Objective
 
-Build a bridge AI research stack where:
-- a transformer handles bidding prediction and hidden-hand inference,
-- the model conditions on private information plus full public history,
-- public history explicitly includes the full auction history and later public play history,
-- the model produces a posterior over hidden cards / hands,
-- complete legal deals are sampled from that posterior,
-- sampled deals feed downstream play-time search and later a DDS-backed play oracle,
-- and Modal remains the scaling path for training, evaluation, and experiments.
+Build a bridge AI research stack with:
+- one monolithic transformer policy/value model,
+- pure self-play and search as the primary strength driver,
+- uncertainty-aware play using determinization (information-set style),
+- an opinionated but low-maintenance infrastructure path on Modal,
+- and an initial UI to inspect sample games and model decisions.
 
-## Strategic position
+## Milestone 1 — Foundation and project skeleton
 
-The current repository already contains a working monolithic policy/value baseline with self-play, determinization-aware search, evaluation, manifests, UI, and Modal execution.
-
-That system is no longer the intended long-term bridge architecture.
-
-It is now the control baseline. The target architecture is:
-
-1. transformer bidding model
-2. transformer hidden-hand belief model
-3. constrained whole-deal sampler
-4. search / DDS-backed play logic
-
-This is a deliberate pivot away from asking one network to emit all bids and card plays directly.
-
-## Bootstrap policy
-
-Use supervised bootstrap, but keep it intentionally bounded.
-
-- Bootstrap from at most `1,000` full bridge games initially.
-- Prefer real tournament or high-quality archived games when available.
-- Treat supervised data as initialization, not the main long-term source of improvement.
-- After the first offline bidding/belief model is stable, shift the research effort toward self-play refinement and sampled-deal downstream evaluation.
-
-## Self-play improvement model
-
-Self-play remains part of the plan, but its role changes.
-
-Under the new architecture, self-play should improve:
-- bidding policy quality
-- hidden-hand belief quality
-- coordination quality between partners using the same policy
-
-Assumption:
-- both partners on a side use the same checkpoint and the same bidding policy
-- in the simplest setup, all four seats can use the same checkpoint during self-play
-
-Improvement loop:
-
-1. bootstrap the transformer on up to `1,000` full games
-2. run self-play auctions and full deals with shared-policy partnerships
-3. record:
-   - the public trajectory
-   - the chosen bids
-   - the true hidden-card assignments from the simulator
-   - downstream scores from sampled-deal search / DDS evaluation
-4. use stronger lookahead-backed targets to refine bidding
-5. use the known full deal from self-play as exact supervision for hidden-card belief
-
-Expected feedback cycle:
-- better bidding creates more informative auctions
-- more informative auctions improve posterior inference
-- better posterior samples improve downstream action evaluation
-- better downstream evaluation creates better bidding targets for the next generation
-
-## Keep vs replace
-
-### Keep and reuse
-
-- `src/bridge_ai/common/*`
-  - card/state/action abstractions remain useful.
+### Planned modules (implemented now)
+- `pyproject.toml`
+  - packaging metadata and dependency groups.
+- `requirements.txt`
+  - practical dependency pin baseline.
+- `tests/test_bridge_env.py`
+  - deterministic bridge rule fixtures for legality and scoring sanity checks.
+- `.bazelrc`
+  - Bazel defaults for local runs and failure diagnostics.
+- `WORKSPACE`
+  - Bazel workspace declaration for non-pyproject execution.
+- `BUILD.bazel`
+  - Bazel targets for self-play, training, evaluation, and UI entrypoints.
+- `AGENTS.md`
+  - process constraints and mandatory plan-updating rule.
+- `PLAN.md`
+  - this document.
+- `src/bridge_ai/common/types.py`
+  - canonical enums and domain objects (`Card`, `Suit`, `Rank`, `Seat`, `Phase`, etc.).
+- `src/bridge_ai/common/cards.py`
+  - deck construction and shuffle/deal helpers.
+- `src/bridge_ai/common/actions.py`
+  - action encoding for a unified action space.
+- `src/bridge_ai/common/state.py`
+  - immutable state dataclasses used by env, model, search, and UI.
 - `src/bridge_ai/env/bridge_env.py`
-  - legality, scoring, and replay validation remain core infrastructure.
+  - rule-engine shell for bridge game progression (auction → play), legal action masks, and scoring hooks.
+- `src/bridge_ai/models/monolithic_transformer.py`
+  - single neural trunk + phase-aware action/value heads.
+- `src/bridge_ai/search/ismcts.py`
+  - imperfect-information MCTS facade with determinization hooks.
+- `src/bridge_ai/data/buffer.py`
+  - replay buffer interface and serialization format.
 - `src/bridge_ai/data/lin_parser.py`
-  - real-deal ingestion remains relevant for supervised bidding/belief data.
-- `src/bridge_ai/infra/*`
-  - manifests, pipeline orchestration, Modal, and config loading stay in place.
+  - LIN decoding + strict replay validation helpers for real-record ingestion.
+- `src/bridge_ai/selfplay/runner.py`
+  - self-play worker and trajectory generation entrypoints.
+- `src/bridge_ai/training/train_loop.py`
+  - training loop and checkpoint management.
+- `src/bridge_ai/eval/evaluator.py`
+  - fixed-deal evaluator and ladder-match harness stubs.
+- `src/bridge_ai/infra/modal_app.py`
+  - Modal job/function wiring abstraction.
 - `src/bridge_ai/ui/streamlit_app.py`
-  - extend rather than replace; it should inspect beliefs and sampled deals.
-- existing monolithic configs/checkpoints
-  - preserve as control baselines for later comparison.
-
-### De-emphasize
-
-- monolithic full-move policy learning as the main research path
-- scaling no-search self-play as if loss alone will yield strong bridge play
-- deeper investment in the current play-policy head before the belief-model path is tested
-
-### Add
-
-- a bidding-and-belief transformer model
-- belief-specific training targets and dataset builders
-- a constrained posterior sampler that outputs complete legal deals
-- DDS integration layer for downstream play evaluation / action scoring
-- belief calibration and sample-validity evaluation tooling
-
-## Target system design
-
-### Inputs to the model
-
-The model should condition on:
-- own hand
-- seat / dealer / vulnerability / scoring context
-- full auction history
-- public play history once cardplay is modeled
-- any known public cards such as dummy after opening lead
-
-### Outputs from the model
-
-The first target version should produce:
-- `bidding_policy`
-  - distribution over legal calls at the current auction state
-- `hidden_card_belief`
-  - posterior logits or probabilities for ownership of each unseen card
-- optional auxiliary heads
-  - HCP ranges
-  - suit length buckets
-  - partnership shape summaries
-
-### Downstream inference path
-
-At inference time:
-
-1. run the model on private hand + full public history
-2. obtain beliefs over unseen card ownership
-3. sample one or more complete legal deals from the posterior
-4. run downstream play logic on those deals
-5. aggregate action values across sampled deals
-
-The initial downstream play logic can be simple search over sampled deals.
-The intended stronger downstream play logic is DDS-backed cardplay evaluation.
-
-## Milestone 1 — Preserve the current baseline
-
-### Goal
-
-Keep the existing monolithic system runnable as a control baseline while the new architecture is implemented.
-
-### Status
-
-- [x] Bridge environment, legality, scoring, and replay validation exist.
-- [x] Monolithic transformer policy/value model exists.
-- [x] Determinization-aware search exists.
-- [x] Self-play, train, eval, pipeline, UI, and manifest tooling exist.
-- [x] Modal runner exists and has completed smoke and scaled benchmark runs.
-- [x] Search-guided smoke run is validated end to end.
-
-### Guardrail
-
-Do not remove or silently repurpose the monolithic stack. Keep it runnable for control experiments until the belief-model path is proven.
-
-## Milestone 2 — Supervised bidding and belief data
-
-### Goal
-
-Turn complete deal records into supervised examples for bidding and hidden-hand inference.
-
-### Bootstrap constraint
-
-- [ ] Cap the first supervised bootstrap corpus at `1,000` full games total.
-- [ ] Prefer full tournament-style records rather than synthetic partial examples.
-- [ ] Keep provenance metadata so the exact bootstrap subset is reproducible.
-
-### Planned modules
-
-- `src/bridge_ai/data/belief_dataset.py`
-  - builds supervised examples from full deals and auction records
-- `src/bridge_ai/data/belief_targets.py`
-  - defines target schemas for bidding and hidden-card ownership
-
-### Planned tasks
-
-- [ ] Define a training example schema containing:
-  - private seat hand
-  - public state
-  - full auction history
-  - optional public cardplay history
-  - target next bid
-  - target ownership of every unseen card
-- [ ] Build dataset conversion from LIN/PBN-style full records where possible.
-- [ ] Build an explicit `bootstrap_1000` dataset manifest:
-  - source URL or archive name
-  - game identifiers
-  - split assignment
-- [ ] Add support for seat-wise supervision:
-  - each auction position becomes its own example
-  - targets reflect that seat's hidden information state.
-- [ ] Add optional auxiliary labels:
-  - opponent / partner HCP
-  - suit lengths
-  - shape buckets
-- [ ] Add held-out dataset split logic for offline belief evaluation.
-
-## Milestone 3 — Bidding + belief transformer
-
-### Goal
-
-Implement a transformer that predicts both bidding and hidden-card beliefs from private hand plus full public history.
-
-### Planned modules
-
-- `src/bridge_ai/models/bidding_belief_transformer.py`
-- `src/bridge_ai/training/belief_train_loop.py`
-
-### Planned tasks
-
-- [ ] Reuse or adapt the existing encoder/tokenization path where sensible.
-- [ ] Add a bidding head for legal-call prediction.
-- [ ] Add a belief head that predicts owner logits for each unseen card.
-- [ ] Keep the architecture transformer-based with a shared trunk and separate heads.
-- [ ] Add losses for:
-  - bidding cross-entropy / KL
-  - card-owner cross-entropy
-  - optional auxiliary losses
-- [ ] Add checkpoint save/load path independent of the monolithic baseline checkpoints.
-- [ ] Keep the first training recipe offline and supervised only.
-- [ ] Do not expand the bootstrap corpus beyond `1,000` games before measuring whether self-play refinement is already adding value.
-
-## Milestone 4 — Posterior sampling over complete deals
-
-### Goal
-
-Turn belief outputs into complete legal hidden-hand assignments.
-
-### Planned modules
-
-- `src/bridge_ai/inference/posterior_sampler.py`
-- `src/bridge_ai/inference/constraints.py`
-
-### Planned tasks
-
-- [ ] Implement a constrained sequential sampler:
-  - assign each unseen card to a seat,
-  - mask impossible seats,
-  - maintain exact remaining hand counts,
-  - respect cards already known or played.
-- [ ] Start with factorized per-card logits plus constraint-aware sampling.
-- [ ] Evaluate whether an autoregressive sampler is needed for better joint modeling.
-- [ ] Track sample validity metrics and posterior concentration diagnostics.
-- [ ] Add deterministic seeded sampling for reproducible comparisons.
-
-## Milestone 4b — Self-play refinement for bidding and belief
-
-### Goal
-
-Use self-play to improve the bootstrap model after the first offline bidding/belief checkpoint exists.
-
-### Planned tasks
-
-- [ ] Add a self-play data path for the new architecture:
-  - full simulated deal
-  - seat-private observation
-  - full public auction history
-  - chosen bid
-  - exact hidden-card ownership targets
-  - downstream rollout / DDS-backed value signal where available
-- [ ] Assume shared-policy partners by default during self-play.
-- [ ] Compare self-play refinement against the offline-only bootstrap model on fixed held-out boards.
-- [ ] Track whether self-play improves:
-  - bidding quality
-  - posterior calibration
-  - downstream score
-- [ ] Keep the self-play-generated targets clearly separated from the initial `bootstrap_1000` corpus.
-
-## Milestone 5 — DDS-backed play integration
-
-### Goal
-
-Use sampled deals for downstream play-time decision support rather than asking the network to output cardplay directly.
-
-### Planned modules
-
-- `src/bridge_ai/play/dds_adapter.py`
-- `src/bridge_ai/play/sample_play_policy.py`
-
-### Planned tasks
-
-- [ ] Integrate an external open-source DDS implementation rather than writing one from scratch.
-- [ ] Add a deal-to-DDS conversion layer.
-- [ ] Add batched or repeated evaluation over sampled deals.
-- [ ] Aggregate DDS-backed values across samples into play action scores.
-- [ ] Keep a non-DDS fallback path for environments where the solver is unavailable.
-
-### Integration target
-
-Prefer one of:
-- the upstream `dds-bridge/dds` C++ library directly
-- or a stable Python-facing wrapper such as `endplay.dds` if packaging/runtime constraints are acceptable
-
-## Milestone 6 — Evaluation and research controls
-
-### Goal
-
-Measure whether the new architecture is actually better, not just lower loss.
-
-### Planned tasks
-
-- [ ] Add offline bidding metrics:
-  - next-call accuracy
-  - log-loss
-- [ ] Add offline belief metrics:
-  - per-card owner accuracy
-  - per-card owner log-loss
-  - calibration
-  - legal whole-deal sample rate
-- [ ] Add downstream play metrics:
-  - score against fixed board sets
-  - delta versus monolithic baseline
-  - latency per decision
-- [ ] Keep fixed-seed evaluation and manifest discipline for all comparisons.
-
-## Milestone 7 — Modal scaling
-
-### Goal
-
-Run the new data, training, and evaluation flow remotely once the architecture is locally valid.
-
-### Planned tasks
-
-- [ ] Extend Modal config/runtime support for belief-model training jobs.
-- [ ] Keep artifacts namespaced by experiment family:
-  - monolithic control
-  - bidding-belief baseline
-  - bidding-belief + sampler
-  - bidding-belief + DDS
-- [ ] Benchmark:
-  - offline supervised training throughput
-  - sampled-deal inference throughput
-  - downstream DDS evaluation throughput
-
-## Execution log
-
-- 2026-03-01 to 2026-03-05:
-  - built and validated the original monolithic bridge stack:
-    - env, model, search, self-play, train, eval, manifests, UI, and Bazel targets
-  - added real LIN replay validation
-  - added Modal volume-backed execution
-  - completed remote smoke and non-smoke Modal runs
-  - launched a larger `scale5x` Modal run as the current monolithic control experiment
-  - fixed search-evaluator correctness issues
-  - validated one search-guided smoke pipeline end to end
-- 2026-03-06:
-  - architecture direction formally changed
-  - full project plan rewritten around:
-    - bidding prediction
-    - hidden-hand posterior modeling
-    - constrained whole-deal sampling
-    - downstream DDS-backed play evaluation
-  - monolithic self-play/search stack retained as control baseline only
-  - added an explicit bootstrap constraint:
-    - initial supervised data cap is `1,000` full games
-  - added the new self-play refinement loop:
-    - shared-policy partnerships
-    - self-play improves both bidding targets and hidden-hand supervision
-    - supervised bootstrap is now treated as initialization only
-  - implemented the first runnable bidding-plus-belief stack:
-    - replaced the old `selfplay/train/eval` execution path with:
-      - bootstrap dataset build from full auction records,
-      - transformer bidding + hidden-card belief training,
-      - holdout evaluation with posterior-sampling diagnostics
-    - added:
-      - `src/bridge_ai/data/bootstrap_records.py`
-      - `src/bridge_ai/data/belief_dataset.py`
-      - `src/bridge_ai/models/bidding_belief_transformer.py`
-      - `src/bridge_ai/inference/posterior_sampler.py`
-      - root `NOTES.md` benchmark note for Jack/GIB/WBridge5 black-box comparisons
-    - updated:
-      - `configs/default.yaml`
-      - `configs/smoke.yaml`
-      - `configs/modal.yaml`
-      - `configs/modal_smoke.yaml`
-      so the primary runtime path now targets the new architecture.
-  - validated the first local smoke pipeline on the new stack:
-    - `bazel run //:pipeline -- --config-path=configs/smoke.yaml`
-    - result:
-      - `selfplay_ok=True`
-      - `train_ok=True`
-      - `eval_ok=True`
-      - `examples=23`
-      - `bid_accuracy=0.5652`
-      - `bid_loss=2.0753`
-      - `belief_accuracy=0.2910`
-      - `belief_loss=1.3865`
-      - `avg_true_owner_prob=0.2540`
-      - `sampler_validity_rate=1.0`
-    - interpretation:
-      - the code path is now end-to-end runnable,
-      - output distributions are still weak, but they are not collapsed or obviously broken,
-      - the legal constrained sampler is producing valid full deals consistently on smoke scale.
-  - validated the new stack on Modal:
-    - smoke run:
-      - `modal run -m bridge_ai.infra.modal_app --config-path configs/modal_smoke.yaml --job pipeline_worker`
-      - result:
-        - `selfplay_ok=True`
-        - `train_ok=True`
-        - `eval_ok=True`
-        - `examples=16`
-        - `bid_accuracy=0.5000`
-        - `belief_accuracy=0.1859`
-        - `sampler_validity_rate=1.0`
-    - small GPU run:
-      - `modal run -m bridge_ai.infra.modal_app --config-path configs/modal.yaml --job pipeline_worker`
-      - result:
-        - `selfplay_ok=True`
-        - `train_ok=True`
-        - `eval_ok=True`
-        - `examples=17`
-        - `bid_accuracy=0.5882`
-        - `belief_accuracy=0.2760`
-        - `sampler_validity_rate=1.0`
-      - remote artifacts confirmed on the shared volume:
-        - `/vol/bridge-ai/replays/belief/latest.json`
-        - `/vol/bridge-ai/checkpoints/belief/latest.pt`
-        - `/vol/bridge-ai/artifacts/belief/manifest.json`
-        - `/vol/bridge-ai/artifacts/belief/belief_eval_preview.json`
-    - interpretation:
-      - the new bidding-plus-belief path now works both locally and on Modal,
-      - small neural nets train successfully on remote hardware,
-      - and the output distributions are at least plausible enough to inspect rather than obviously degenerate.
-  - implemented the reproducible `bootstrap_1000` tournament-data path:
-    - added `src/bridge_ai/data/tournament_bootstrap.py`
-    - added configs:
-      - `configs/bootstrap1000.yaml`
-      - `configs/modal_bootstrap1000.yaml`
-    - source archive:
-      - `bridge_deals_db` release `bridge_deals.tar.gz`
-    - selected event files:
-      - `BermudaBowl2023.json`
-      - `VeniceCup2023.json`
-      - `dOrsiTrophy2023.json`
-      - `WuhanCup2023.json`
-    - record selection:
-      - `250` room records per event
-      - `1000` total room records
-  - added per-epoch holdout logging and plot artifacts:
-    - training now writes:
-      - `training_history.json`
-      - `accuracy_curves.svg`
-    - plot tracks holdout bid accuracy and holdout belief accuracy over training.
-  - validated local `bootstrap_1000` dataset build:
-    - `bazel run //:selfplay -- --config-path=configs/bootstrap1000.yaml`
-    - result:
-      - `num_records=1000`
-      - `train_examples=9289`
-      - `holdout_examples=2378`
-  - completed the first Modal `bootstrap_1000` training run:
-    - `modal run -m bridge_ai.infra.modal_app --config-path configs/modal_bootstrap1000.yaml --job pipeline_worker`
-    - result:
-      - `examples=1024`
-      - `bid_accuracy=0.7217`
-      - `bid_loss=0.9524`
-      - `belief_accuracy=0.3767`
-      - `belief_loss=1.2708`
-      - `avg_true_owner_prob=0.2924`
-      - `sampler_validity_rate=1.0`
-    - pulled artifacts locally:
-      - `training_history_bootstrap1000.json`
-      - `accuracy_curves_bootstrap1000.svg`
-      - `bootstrap1000_manifest_modal.json`
-    - interpretation:
-      - the first real tournament bootstrap already lifts both bidding and belief metrics substantially over the smoke-scale runs,
-      - and the holdout curves show monotonic improvement over the 10-epoch Modal training window.
-  - upgraded belief measurement to cover play-phase inference, not just auction-state inference:
-    - dataset examples now include:
-      - full public auction history,
-      - visible dummy cards when exposed,
-      - public played-card history,
-      - current trick state,
-    - evaluator now reports:
-      - `auction_belief_accuracy`
-      - `play_belief_accuracy`
-      - `play_belief_accuracy_by_played_count`
-    - training history now records:
-      - `holdout_auction_belief_accuracy`
-      - `holdout_play_belief_accuracy`
-      and the SVG curve includes the play-belief trajectory.
-  - reran `bootstrap_1000` on Modal with the upgraded measurement path:
-    - final held-out metrics:
-      - `bid_accuracy=0.7373`
-      - `belief_accuracy=0.3748`
-      - `auction_belief_accuracy=0.3772`
-      - `play_belief_accuracy=0.3728`
-    - training trajectory:
-      - epoch `0`:
-        - `bid_accuracy=0.1994`
-        - `auction_belief_accuracy=0.2637`
-        - `play_belief_accuracy=0.2460`
-      - epoch `10`:
-        - `bid_accuracy=0.7373`
-        - `auction_belief_accuracy=0.3772`
-        - `play_belief_accuracy=0.3728`
-    - interpretation:
-      - the model now has a measurable belief-quality trace through play,
-      - and both auction-phase and play-phase belief improved materially during the tournament bootstrap run.
-  - repaired the GitHub Actions CI dependency graph on Linux:
-    - root cause:
-      - Bazel `rules_python` was resolving `torch` from PyPI on Linux x86_64,
-      - which pulled the CUDA-enabled wheel and failed at import time on the CPU-only GitHub runner with missing `libcudart.so.12` / `libnvJitLink.so.12`,
-      - so `main` CI needed a CPU-wheel source for `torch`, not more CUDA packages in the lockfile.
-    - fix:
-      - configured `pip.parse` to resolve `torch` from the PyTorch CPU wheel index while leaving the rest of the Python graph on PyPI,
-      - added a Linux-specific lockfile that pins `torch==2.2.2+cpu` so Bazel uses CPU-wheel metadata on GitHub Actions instead of PyPI's CUDA metadata,
-      - removed the previously added CUDA-only `nvidia_*` and `triton` entries from the requirements files,
-      - kept the existing pinned `torch` version and the rest of the lockfile stable.
-    - local verification:
-      - `bazel test //:test_env_rules`
-      - `bazel run //:smoke -- --config-path=configs/smoke.yaml --manifest-path=artifacts/smoke/manifest.json`
-      - `bazel run //:manifest_check -- --manifest-path=artifacts/smoke/manifest.json`
-      - confirmed `torch==2.2.2` resolves to CPU wheels from `https://download.pytorch.org/whl/cpu` for both Linux x86_64 and macOS arm64.
-
-## Immediate next actions
-
-1. Finish preserving the active Modal run outputs as monolithic control artifacts.
-2. Improve offline evaluation artifacts:
-   - add calibration reporting and confidence histograms.
-3. Add self-play refinement once the first offline model is stable.
-4. Integrate DDS only after sampled deals are valid and reproducible.
+  - minimal viewer for sample game logs and model action traces.
+- `src/bridge_ai/infra/experiment_runner.py`
+  - one-command smoke orchestration (`selfplay`, `train`, `eval`) runner.
+- `src/bridge_ai/infra/manifest_checker.py`
+  - manifest consistency entrypoint for reproducibility checks.
+- `src/bridge_ai/infra/pipeline.py`
+  - iterative pipeline orchestrator that chains self-play, training, and evaluation.
+- `.gitignore`
+  - ignore artifacts and checkpoints.
+
+### Current Implementation Status
+- [x] Create repository-level plan/agent instructions.
+- [x] Scaffold package modules and interfaces.
+- [x] Implement baseline project structure, model/env/search/self-play/eval/trainer placeholders.
+- [x] Add Bazel build/runtime scaffolding for repository execution.
+- [x] Fill bridge rule legality and scoring (auction + play mechanics, trick winner, passout handling, contract scoring baseline).
+- [x] Implement full tokenization flow for replay ingestion through `BridgeInputEncoder.encode_dict`.
+- [x] Implement transformer internals updates including padded-sequence masking in the encoder forward path.
+- [x] Implement determinization + IS-MCTS rollout integration.
+- [x] Wire baseline infrastructure entrypoints (Modal functions for self-play/train/eval and checkpoint output path updates).
+- [x] Add richer replay viewer with step diagnostics and per-move action-confidence display.
+- [x] Add experiment/version manifest and artifact catalog path (`artifacts/manifest.json`) with run writes from selfplay/train/eval.
+- [x] Add manifest reproducibility metadata and frozen config snapshot writes.
+- [x] Add deterministic bridge-env regression test suite and Bazel test target.
+- [x] Add real-bridge LIN replay test fixture coverage in `tests/test_bridge_env.py` for end-to-end legal-action replay validation.
+- [x] Add manifest reproducibility validation helper (`validate_manifest`) for run auditability.
+- [x] Add deterministic checkpoint baseline comparison path in evaluator (`baseline_checkpoint`, delta metrics).
+- [x] Add dedicated research planning artifact (`RESEARCH_PLAN.md`) for experiment design, execution log, and conclusions.
+- [x] Add Bazel smoke + manifest check entrypoints:
+  - `//:smoke`
+  - `//:manifest_check`
+- [x] Add explicit baseline checkpoint field to default eval config (`configs/default.yaml`).
+- [x] Add Bazel-binary CLI overrides (`--config-path`, `--manifest-path`) for `selfplay`, `train`, `eval`, `smoke`, and `manifest_check`.
+- [x] Fix training forward-call signature mismatch in `train_loop.py` (`legal_action_mask`).
+- [x] Update evaluator search step to use model-guided action rollouts through `ISMCTS`.
+- [x] Fix `//:ui` runtime launch path to start Streamlit server mode under Bazel and recursively discover replay files in subdirectories.
+- [x] Add dedicated UI regression tests and Bazel test target (`//:test_ui`) for replay discovery and launcher guard behavior.
+
+### Execution Log
+- 2026-03-01: Initial research scaffolding committed.
+- 2026-03-01: `AGENTS.md` updated with requirement: `PLAN.md` must be updated after each completed/revised step.
+- 2026-03-01: Added module-by-module scaffold for monolithic self-play bridge AI, including:
+  - common abstractions (`Card`, `Action`, phase/state types),
+  - `BridgeEnv` with phase-aware transitions,
+  - monolithic transformer model skeleton,
+  - IS-MCTS abstraction,
+  - replay buffer,
+  - self-play, training, evaluation, Modal, and UI starters,
+  - baseline YAML configs and packaging metadata.
+- 2026-03-01: Added Bazel execution scaffolding:
+  - `WORKSPACE`,
+  - `BUILD.bazel` with `//:selfplay`, `//:train`, `//:eval`, `//:ui` targets,
+  - updated AGENTS runtime policy to require Bazel entrypoints.
+- 2026-03-01: Added `.bazelrc` for local Bazel defaults and developer ergonomics.
+- 2026-03-01: Reworked `src/bridge_ai/env/bridge_env.py` with fuller bridge auction/play legality,
+  contract finalization, trick winner resolution, and baseline scoring logic for made/failed contracts.
+- 2026-03-01: Completed replay-to-encoder integration by wiring `BridgeInputEncoder.encode_dict` and training tokenization.
+- 2026-03-01: Added padded-sequence masking in `BridgeMonolithTransformer.forward`, and expanded serialized state payloads
+  (e.g., declarer/dummy and doubled level) for training/eval replay conversion.
+- 2026-03-01: Added determinization-aware root rollout logic in `src/bridge_ai/search/ismcts.py` with model-guided policy rollouts and sampled hidden-card completion.
+- 2026-03-01: Expanded `src/bridge_ai/infra/modal_app.py` with separate Modal worker functions for self-play/training/eval orchestration.
+- 2026-03-01: Enhanced `src/bridge_ai/ui/streamlit_app.py` with richer replay diagnostics (phase, action decoding, action probability/value columns, raw row toggle).
+- 2026-03-01: Added lightweight experiment manifest logging (`src/bridge_ai/data/manifest.py`) and wired self-play/train/eval to append entries to `artifacts/manifest.json`.
+
+- 2026-03-01: Added run reproducibility metadata and per-run frozen config snapshots (`run_signature`, `config_snapshot`).
+- 2026-03-01: Added deterministic bridge-env regression tests (`tests/test_bridge_env.py`) for passout/follow-suit/trick winner/final score checks.
+- 2026-03-03: Added real-game LIN replay validation test harness in `tests/test_bridge_env.py` for deterministic legality checks over sampled BBO-formatted records.
+- 2026-03-04: Centralized LIN ingest/replay validation in `src/bridge_ai/data/lin_parser.py` and reused it in `tests/test_bridge_env.py` for strict full/partial real-record checks.
+- 2026-03-04: Added a curated 20-entry real-world LIN fixture under `tests/fixtures/real_lin_records.txt`, normalized fixture formatting, and fixed `src/bridge_ai/data/lin_parser.py` to support explicit 4-hand `md` records.
+- 2026-03-01: Added Bazel test target `//:test_env_rules` in `BUILD.bazel`.
+- 2026-03-01: Added manifest validation helper (`validate_manifest`, `validate_manifest_entry`) and coverage for the behavior in `tests/test_bridge_env.py`.
+- 2026-03-01: Added deterministic fixed-seed evaluator path with optional baseline checkpoint head-to-head metrics.
+- 2026-03-01: Added `//:smoke` and `//:manifest_check` Bazel entrypoints for experiment execution and reproducibility checks.
+- 2026-03-01: Added `baseline_checkpoint` to `configs/default.yaml`.
+- 2026-03-01: Added argparse-compatible overrides to all Bazel runtime entrypoints:
+  - `selfplay`, `train`, `eval` (`--config-path`),
+  - `smoke` (`--config-path`, `--manifest-path`),
+  - `manifest_check` (`--manifest-path`).
+- 2026-03-01: Fixed training loop forward call keyword mismatch in `train_loop.py` (`legal_action_mask` vs `legal_mask`).
+- 2026-03-01: Updated evaluator to use model-guided ISMCTS during play (`search.select_action(..., model=model)`).
+- 2026-03-01: Updated `AGENTS.md` with `//:smoke` / `//:manifest_check` execution guidance.
+- 2026-03-01: Added `RESEARCH_PLAN.md` for hypothesis tracking, run protocols, experiment ledgers, and decision criteria.
+- 2026-03-01: Updated AGENTS governance to require immediate `RESEARCH_PLAN.md` updates after experiments/conclusions.
+- 2026-03-01: Synchronized `PLAN.md` with completed pipeline-first implementation:
+  - added `//:pipeline` orchestration module to implementation inventory;
+  - marked Milestone 2/3/4 task execution states based on current code; 
+  - added iterative `//:pipeline` in next-action checklist and made Bazel invocation docs reflect `--config-path` conventions.
+- 2026-03-01: Expanded Streamlit UI controls for replay filtering and comparisons:
+  - added seed/variant/determinization selectors for replay discovery,
+  - added optional baseline replay comparison view (contract/result/seed),
+  - surfaced determinization metadata in per-game and per-move diagnostics.
+- 2026-03-01: Completed optional model auxiliary-path plumbing:
+  - added `model.use_auxiliary_heads` option to config and model config dataclass,
+  - added optional `return_aux` output mode with `trick_share` and `contract_level_logits`.
+- 2026-03-01: Added training online-refresh hook:
+  - added `training.online_refresh` and `training.online_refresh_every`,
+  - `train()` now optionally runs self-play before each configured iteration before reloading replay.
+- 2026-03-01: Added determinization count into replay transition metadata to support replay-level experiment slicing.
+- 2026-03-01: Updated `RESEARCH_PLAN.md` to include concrete research run templates, reproducibility gates, and completed tiny smoke ledger.
+- 2026-03-01: Added `configs/smoke.yaml` for immediate one-episode, low-latency smoke execution.
+- 2026-03-01: Updated `.gitignore` to ignore Bazel/output artifacts (`bazel-*`, `artifacts/`) by default.
+- 2026-03-02: Added GitHub Actions CI workflow (`.github/workflows/ci.yml`) to run `bazel test //:test_env_rules`, `bazel run //:smoke` with smoke manifest, and `bazel run //:manifest_check` on push/PR.
+- 2026-03-04: Fixed Streamlit UI launch behavior in `src/bridge_ai/ui/streamlit_app.py` so `bazel run //:ui` starts Streamlit server mode (in-process bootstrap) instead of remaining in bare mode, and updated replay loading to recursively index nested `replays/**.json` artifacts by relative path.
+- 2026-03-04: Added `tests/test_ui.py` with launcher/replay-discovery regressions and registered Bazel target `//:test_ui` in `BUILD.bazel`.
+- 2026-03-04: Fixed Linux CI Bazel smoke-analysis failure (`@@rules_python++pip+pypi//watchdog` missing) by adding explicit `watchdog` dependency in `requirements.txt` and pinning it in `requirements_lock.txt`.
+- 2026-03-06: Revised the next engineering milestone toward self-play strength measurement:
+  - current evaluator compares one checkpoint against zero / independently evaluated baselines, not direct checkpoint-vs-checkpoint play,
+  - current pipeline does not automatically promote the just-trained checkpoint into the next self-play iteration,
+  - current training continuation still depends on explicitly setting `init_checkpoint`,
+  - added Milestone 3b to track checkpoint lineage, duplicate evaluation, and Elo-style rating infrastructure before broader scaling.
+- 2026-03-10: Completed Milestone 3b self-play strength infrastructure:
+  - added replay shard/index storage in `src/bridge_ai/data/replay_store.py` and switched self-play + training to use replay windows instead of a single mutable replay file,
+  - added checkpoint lineage/index storage in `src/bridge_ai/training/checkpoint_store.py` with immutable snapshot checkpoints plus `latest.pt` promotion,
+  - updated `src/bridge_ai/selfplay/runner.py` to auto-load the latest promoted checkpoint and persist replay provenance,
+  - updated `src/bridge_ai/training/train_loop.py` so each train invocation performs new learner steps from the active checkpoint, resumes `latest.pt` by default, and emits immutable snapshots,
+  - replaced `src/bridge_ai/eval/evaluator.py` with duplicate checkpoint-vs-checkpoint evaluation, opponent-pool selection, benchmark suite support, and Elo-style rating artifact writes,
+  - added workspace-aware path resolution so Bazel runs now write `artifacts/`, `replays/`, and `checkpoints/` into the repository workspace instead of Bazel execroot,
+  - added `configs/smoke_rating.yaml` for isolated duplicate-rating smoke verification,
+  - converted `tests/test_bridge_env.py` into a real `unittest`-discoverable Bazel test file and added regression coverage for replay shards, checkpoint identity, training continuation, and duplicate rating evaluation,
+  - fixed bridge trick-winner trump precedence in `src/bridge_ai/env/bridge_env.py`,
+  - corrected LIN `md` hand ordering in `src/bridge_ai/data/lin_parser.py` to fixed `South, West, North, East` ordering.
+- 2026-03-10: Revised the next execution slice toward real checkpoint validation on Modal:
+  - continue the preserved `local_real_scale2000/latest.pt` checkpoint for +1000 learner iterations on Modal-backed storage,
+  - import the legacy local checkpoint into the new checkpoint-lineage format as the seed snapshot for continuation,
+  - add a fixed-suite checkpoint league report so the initial baseline, the 2000-step checkpoint, and the continued checkpoint can be compared on duplicate boards with persisted ratings.
+- 2026-03-10: Implemented the Modal continuation launcher and explicit checkpoint league workflow:
+  - added `src/bridge_ai/infra/modal_continue.py` plus Bazel entrypoint `//:modal_continue`,
+  - added legacy-checkpoint import / initial-baseline helpers in `src/bridge_ai/training/checkpoint_bootstrap.py`,
+  - added explicit pairwise league runner in `src/bridge_ai/eval/league_runner.py` plus Bazel entrypoint `//:league_eval`,
+  - added `configs/modal_real_scale3000.yaml` to continue the preserved 2000-step checkpoint on Modal and compare against an initial baseline.
+- 2026-03-10: Current Modal execution state:
+  - Modal GPU jobs are not usable in this workspace right now:
+    - GPU app launch with `nonpreemptible=true` failed immediately because Modal disallows that combination,
+    - GPU app launch without `nonpreemptible` also failed before user-code execution in this workspace, and a minimal independent GPU probe produced the same `app is stopped or disabled` behavior.
+  - The CPU Modal continuation path is working when launched detached:
+    - detached app `ap-GcJBky40zdgqY8jAzM5xR7` is continuing from the imported `iter_002000.pt`,
+    - the remote volume has already advanced through `iter_002200.pt` and `iter_002400.pt`,
+    - self-play, train, and eval are all committing on Modal-backed storage between cycles.
+  - The blocking issue is now wall-clock duration, not code correctness:
+    - each 200-step learner block is taking roughly 38-42 minutes on the accepted CPU worker class,
+    - so the full 2000 -> 3000 continuation will take multiple hours unless GPU capacity becomes available.
+
+- 2026-03-01: Fixed training checkpoint resume semantics in `src/bridge_ai/training/train_loop.py` to persist and restore `iteration` from checkpoints, enabling true continuation across process restarts (weight-only warm starts now resume from the saved iteration).
+- 2026-03-01: Added configurable `training.checkpoint_every` in `src/bridge_ai/training/train_loop.py` and periodic checkpoint persistence at runtime every N iterations.
+- 2026-03-01: Removed legacy local test configs and started a fresh namespace with `configs/local_real_scale2000.yaml` for clean 2000-iteration experiments.
+- 2026-03-01: Completed a fresh `bazel run //:pipeline -- --config-path=configs/local_real_scale2000.yaml` stretch to full `iterations=2000` with `training.checkpoint_every: 100`.
+- 2026-03-01: Confirmed `local_real_scale2000` end-to-end manifest integrity:
+  - `selfplay` + `train` + `eval` all `status=ok`
+  - train final `loss=0.03137740562669933` at `iteration: 1999`
+  - `eval mean_score=-187.5`, `win_rate_vs_zero=0.0`, `score_std=188.33148966649205`
+  - `bazel run //:manifest_check -- --manifest-path=artifacts/local_real_scale2000/manifest.json` returned `manifest_issues=[]`.
+
+### Milestone 1b — Bazel-first execution
+
+- [x] Add `WORKSPACE` and `BUILD.bazel`.
+- [x] Add Bazel binaries:
+  - `//:selfplay`
+  - `//:train`
+  - `//:eval`
+  - `//:ui`
+- [x] Add Bazel regression target:
+  - `//:test_env_rules`
+- [x] Add explicit AGENTS constraint to avoid direct `python` execution.
+
+## Milestone 2 — Model and algorithm implementation
+
+### Core modeling choices
+- Single monolithic transformer with a shared encoding trunk.
+- Phase-conditioned behavior via tokenized phase input (`auction`, `lead`, `play`, `defense`).
+- Shared policy/value heads for all phases with strict phase/legal masking.
+- Replay-based bootstrap from self-play only after warm stability checks.
+
+### Planned implementation tasks
+- [x] Build full tokenization schema:
+  - ownership visibility tokens
+  - auction history tokens
+  - dummy/public cards
+  - trick history and current-trick cards
+  - vulnerability and scoring context fields
+- [x] Implement policy head with legal-action masking.
+- [x] Implement value head that predicts a normalized final outcome.
+- [x] Add trajectory storage of `(state, policy_target, value_target, metadata)`.
+- [x] Add optional auxiliary heads (toggle via config) and optional forward return path for auxiliary outputs.
+- [x] Implement train loop:
+  - sample self-play trajectories
+  - store `(state, policy_target, value_target, metadata)`
+  - optimize policy/value losses
+  - checkpoint management and resume
+
+## Milestone 3 — Self-play stack and ISMCTS
+
+### Key algorithmic requirements
+- [x] Determinization:
+  - sample hidden states from information set
+  - run search per sample
+  - aggregate action statistics at infoset root
+- [x] Search:
+  - PUCT-like value backup adapted for sampled game branches
+  - partner-as-shared-utility updates at pair level where available in environment contract
+  - configurable node caps for latency control (`search_config` and model-guided rollouts)
+- [x] Output target policy:
+  - visit distribution from search, with configurable fallback to model policy
+- [x] Actor loop:
+  - supports seed schedules and multiple determinization samples per move
+- [x] Learner loop:
+  - added `training.online_refresh` and `training.online_refresh_every` controls for optional self-play-to-trainer refresh per train iteration.
+- [x] Evaluator loop:
+  - fixed-seed evaluation vs baseline checkpoints
+
+## Milestone 3b — Self-play improvement measurement
+
+### Infrastructure target
+- Turn the current self-play/train/eval loop into a true checkpoint lineage that can answer:
+  - whether stronger checkpoints generate stronger self-play data,
+  - whether newer checkpoints beat older checkpoints on the same boards,
+  - and how pair strength changes over time under a stable rating protocol.
+
+### Planned implementation tasks
+- [x] Add checkpoint lineage + snapshotting:
+  - keep `latest.pt` as the mutable handoff checkpoint,
+  - emit immutable snapshots such as `checkpoints/<sweep>/iter_000100.pt`,
+  - record parent checkpoint + training step metadata in manifest entries.
+- [x] Add replay storage suitable for self-play training:
+  - replace single-file `latest.json` handoff with sharded or windowed replay storage,
+  - retain a configurable mix of recent generations for learner stability,
+  - record replay shard provenance in manifest entries.
+- [x] Thread active checkpoints through the pipeline:
+  - self-play should load the promoted checkpoint from the previous learner step,
+  - training should resume from the latest promoted checkpoint by default,
+  - evaluation should compare promoted snapshots instead of unrelated standalone runs.
+- [x] Add duplicate head-to-head evaluation:
+  - run checkpoint A vs checkpoint B on identical deal sets,
+  - swap seat orientation on the same boards,
+  - score by paired board differential to reduce deal variance.
+- [x] Add rating/league tracking:
+  - maintain an opponent pool of historical checkpoints,
+  - update an Elo-style or logistic rating from head-to-head match outcomes,
+  - write per-checkpoint rating history for plotting.
+- [x] Add benchmark suites:
+  - fixed seed/deal suites for quick regression, medium-scale gating, and long-run rating updates,
+  - explicit separation between training deals and evaluation deals.
+- [x] Add artifact outputs for analysis:
+  - per-match summaries,
+  - per-board duplicate results,
+  - rating history table / JSONL for plotting.
+
+## Milestone 4 — Modal-first infrastructure
+
+### Infrastructure target
+- Minimize local hardware management by running:
+  - actor fleets,
+  - trainer jobs,
+  - evaluator jobs
+  as Modal functions in GPU/CPU-appropriate containers.
+
+### Implementation tasks
+- [x] Define separate job entrypoints for:
+  - actor generation,
+  - checkpoint training,
+  - evaluation.
+- [x] Add manifest-driven run config:
+  - `configs/default.yaml`,
+  - `configs/local.yaml`/`configs/modal.yaml`.
+- [x] Standard artifact layout:
+  - `checkpoints/`,
+  - `replays/`,
+  - `evaluation/`,
+  - `ui/` snapshots.
+- [x] Add iterative pipeline entrypoint to run full actor/trainer/eval cycles.
+- [x] Add `configs/local.yaml` / `configs/modal.yaml` specialization files if/when Modal deployment is enabled.
+- [ ] Add Modal volume/bootstrap path for importing an existing local checkpoint into remote storage.
+- [ ] Add a Bazel-invoked Modal continuation runner that executes sequential self-play/train/eval cycles remotely.
+- [ ] Add a post-run sync/report path so local analysis can compare Modal-produced checkpoints against preserved local baselines.
+- [x] Add Modal volume/bootstrap path for importing an existing local checkpoint into remote storage.
+- [x] Add a Bazel-invoked Modal continuation runner that executes sequential self-play/train/eval cycles remotely.
+- [x] Add a post-run sync/report path so local analysis can compare Modal-produced checkpoints against preserved local baselines.
+- [x] Add target-aware Modal continuation planning so reruns resume from the saved volume and only execute the remaining learner blocks needed to hit the requested checkpoint step.
+- [ ] Finish the in-flight detached Modal CPU continuation through `iter_003000.pt` or regain working Modal GPU capacity.
+
+## Milestone 5 — UI and analysis
+
+### UI requirements (MVP)
+- [x] Show one complete sample game:
+  - deal, auction, play-by-play, contract/result.
+- [x] Show model outputs per decision:
+  - top-k legal actions,
+  - action probabilities,
+  - predicted value.
+- [x] Provide comparison controls:
+  - current checkpoint vs baseline checkpoint,
+  - determinization count display,
+  - random seed and variant selectors.
+- [x] Add baseline diff view using paired replay selection and result/contract summary.
+
+## Implementation checkpoints and next immediate actions
+
+1. Run Bazel test smoke:
+   - `bazel test //:test_env_rules`
+   - `bazel test //:test_ui`
+2. Run baseline reproducibility checks:
+   - `bazel run //:manifest_check`
+   - use explicit per-run manifest path, e.g. `artifacts/baseline/manifest.json`
+   - confirm stable `run_signature` for fixed config,
+   - confirm `config_snapshot` file exists and matches run config.
+3. Run one pipeline iteration end-to-end:
+   - `bazel run //:pipeline`
+4. Run one full experiment batch:
+   - `bazel run //:selfplay -- --config-path=configs/smoke.yaml`
+   - `bazel run //:train -- --config-path=configs/smoke.yaml`
+   - `bazel run //:eval -- --config-path=configs/smoke.yaml`
+   - `bazel run //:ui`
+5. Inspect manifest + evaluator outputs for trend signals and regressions.
+6. Scale the duplicate benchmark suites:
+   - move from `rounds=1` smoke verification to larger fixed suites (`quick`, `gating`, `ladder`),
+7. Finish the detached Modal continuation and only then run the final non-smoke league:
+   - current in-flight detached app: `ap-GcJBky40zdgqY8jAzM5xR7`,
+   - current confirmed remote snapshots: `iter_002200.pt`, `iter_002400.pt`,
+   - `configs/modal_real_scale3000.yaml` now uses `modal.target_step: 3000` with `force_bootstrap: false`, so a restart reuses the saved `iter_002400.pt` progress instead of redoing the first 400 learner steps,
+   - current Modal billing report shows `ap-GcJBky40zdgqY8jAzM5xR7` at `$2.07796300` and workspace month-to-date spend at `$5.07589633`; at the observed burn rate the remaining `2400 -> 3000` continuation is about `$3.12`,
+   - defer the final `initial` vs `scale2000` vs `scale3000` interpretation until `iter_003000.pt` exists locally.
+   - use paired board differential and Elo updates as the primary strength signal.
+7. Run search and determinization ablations on top of the duplicate match harness:
+   - vary search simulations and determinization counts,
+   - compare Elo / paired-score trend against the no-search baseline.
+8. Add experiment and ablation entries to `RESEARCH_PLAN.md` after each run.
+9. Shift pipeline execution to Modal-backed runs:
+   - validate `configs/modal.yaml` against local baseline behavior
+   - run `bazel run //:selfplay`, `bazel run //:train`, `bazel run //:eval` in Modal-compatible mode from the same config namespace
+   - keep `artifacts`, `replays`, and `checkpoints` namespaces separated per sweep for reproducibility.
+10. Track modal scaling outcomes in `RESEARCH_PLAN.md`:
+   - evaluate stability, cost, and throughput deltas versus local baseline.
+   - only expand workload size after manifest-validated baseline parity.
+11. Keep this section as runtime gating; local warm-up experiments plus duplicate-rating verification are complete, and the next engineering milestone is larger paired suites plus search ablations before broader Modal scaling.
 
 ## Non-functional requirements
 
 - Reproducibility:
-  - deterministic seeds
-  - manifest snapshots
-  - explicit config snapshots
-- Modularity:
-  - clean separation between model, sampler, and DDS adapter
-- Auditability:
-  - control baseline remains runnable
-  - belief-model experiments remain comparable
-- Pragmatism:
-  - prefer an external DDS implementation over writing one
-  - avoid scaling the wrong architecture just because infrastructure is already working
+  - deterministic seeding by config,
+  - manifest and checkpoint hashes.
+- Scalability:
+  - batch-friendly tensor outputs,
+  - actor/trainer decoupling,
+  - stateless model serving hooks.
+- Transparency:
+  - keep each module thin and inspectable,
+  - avoid hidden configuration magic.

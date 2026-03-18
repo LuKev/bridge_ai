@@ -15,9 +15,17 @@ py_library(
     name = "third_party",
     deps = [
         requirement("numpy"),
+        requirement("pydantic"),
         requirement("pyyaml"),
-        requirement("torch"),
         requirement("streamlit"),
+        requirement("torch"),
+    ],
+)
+
+py_library(
+    name = "modal_sdk",
+    deps = [
+        requirement("modal"),
     ],
 )
 
@@ -87,11 +95,29 @@ py_binary(
     imports = ["src"],
 )
 
+py_binary(
+    name = "modal_continue",
+    srcs = ["src/bridge_ai/infra/modal_continue.py"],
+    main = "src/bridge_ai/infra/modal_continue.py",
+    deps = [":bridge_ai_core", ":third_party", ":modal_sdk"],
+    data = [":config_files"],
+    imports = ["src"],
+)
+
+py_binary(
+    name = "league_eval",
+    srcs = ["src/bridge_ai/eval/league_runner.py"],
+    main = "src/bridge_ai/eval/league_runner.py",
+    deps = [":bridge_ai_core", ":third_party"],
+    data = [":config_files"],
+    imports = ["src"],
+)
+
 py_test(
     name = "test_env_rules",
     srcs = ["tests/test_bridge_env.py"],
     main = "tests/test_bridge_env.py",
-    deps = [":bridge_ai_core"],
+    deps = [":bridge_ai_core", ":third_party"],
     imports = ["src"],
 )
 

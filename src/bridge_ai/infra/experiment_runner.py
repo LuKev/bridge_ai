@@ -11,6 +11,7 @@ from bridge_ai.training.train_loop import train
 from bridge_ai.eval.evaluator import run as run_eval
 from bridge_ai.selfplay.runner import run as run_selfplay
 from bridge_ai.data.manifest import validate_manifest
+from bridge_ai.common.runtime_paths import resolve_runtime_path
 
 
 @dataclass
@@ -30,32 +31,34 @@ class SmokeResult:
 
 def run_smoke(config_path: str = "configs/default.yaml", manifest_path: str = "artifacts/manifest.json") -> Dict[str, Any]:
     """Run self-play, training, and evaluation in sequence."""
+    config_source = resolve_runtime_path(config_path)
     if not manifest_path:
         import yaml
 
-        cfg_dict = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+        cfg_dict = yaml.safe_load(config_source.read_text(encoding="utf-8"))
         manifest_path = cfg_dict.get("storage", {}).get("manifest_path", manifest_path)
+    manifest_path = str(resolve_runtime_path(manifest_path))
     result = SmokeResult(config_path=config_path)
 
     try:
-        run_selfplay(config_path=config_path)
+        run_selfplay(config_path=str(config_source))
         result.selfplay = StepResult(ok=True)
     except Exception as exc:  # pragma: no cover
         result.selfplay = StepResult(ok=False, error=str(exc))
 
     try:
-        train(config_path=config_path)
+        train(config_path=str(config_source))
         result.train = StepResult(ok=True)
     except Exception as exc:  # pragma: no cover
         result.train = StepResult(ok=False, error=str(exc))
 
     try:
-        run_eval(config_path=config_path)
+        run_eval(config_path=str(config_source))
         result.evaluate = StepResult(ok=True)
     except Exception as exc:  # pragma: no cover
         result.evaluate = StepResult(ok=False, error=str(exc))
 
-    manifest_obj = Path(manifest_path)
+    manifest_obj = resolve_runtime_path(manifest_path)
     if manifest_obj.exists():
         result.manifest_issues = validate_manifest(manifest_path)
 
